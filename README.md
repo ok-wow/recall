@@ -45,6 +45,11 @@ matching lessons.
 git clone <this repo> ~/recall && cd ~/recall && ./install.sh
 ```
 
+Works with **Claude Code** and **Codex**. The host is detected from whichever
+config exists; `--host claude` or `--host codex` picks explicitly. The two take
+the same hook structure in different files (`settings.json` vs `hooks.json`),
+which is why one installer serves both.
+
 `install.sh` registers the hooks with your agent, links the `/compound` skill into your
 agent's skills directory, creates `~/.recall`, and schedules the drain. It prints
 everything it is about to do and asks first.

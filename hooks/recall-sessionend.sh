@@ -154,7 +154,11 @@ fi
 # Match the command with or without an argument. The scheduled drain passes a
 # session ID after the command, so an exact quoted-string match would queue the
 # drain's own session and make the queue grow while it drains.
-if grep -Eq '"content"[[:space:]]*:[[:space:]]*"/compound([[:space:]]|")|<command-name>/compound</command-name>' "$TRANSCRIPT_PATH" 2>/dev/null; then
+# Three shapes, because the hosts record an invoked command differently:
+#   Claude Code  <command-name>/compound</command-name>
+#   Claude Code  "content": "/compound ..."   (plain string content)
+#   Codex        "text":"/compound ..."       (block inside payload.content[])
+if grep -Eq '"(content|text)"[[:space:]]*:[[:space:]]*"/compound([[:space:]]|")|<command-name>/compound</command-name>' "$TRANSCRIPT_PATH" 2>/dev/null; then
     exit 0
 fi
 

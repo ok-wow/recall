@@ -7,6 +7,7 @@
 # leaves an uninstall script that reverses exactly what it did.
 #
 #   ./install.sh              plan, confirm, install
+#   ./install.sh --host codex install for Codex instead of Claude Code
 #   ./install.sh --dry-run    plan only, change nothing
 #   ./install.sh --uninstall  reverse a previous install
 #
@@ -18,21 +19,40 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RECALL_HOME="${RECALL_HOME:-$HOME/.recall}"
 RECALL_CATALOG_DIR="${RECALL_CATALOG_DIR:-$RECALL_HOME/catalogs}"
-RECALL_HOST_DIR="${RECALL_HOST_DIR:-$HOME/.claude}"
-SETTINGS="$RECALL_HOST_DIR/settings.json"
-COMPOUND_SKILL_DEST="${COMPOUND_SKILL_DEST:-$RECALL_HOST_DIR/skills/compound}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 DRY=0
 UNINSTALL=0
 
 for a in "$@"; do
   case "$a" in
+    --host=*) HOST="${a#*=}" ;;
+    --host) WANT_HOST=1 ;;
     --dry-run) DRY=1 ;;
     --uninstall) UNINSTALL=1 ;;
     -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
-    *) echo "unknown option: $a" >&2; exit 2 ;;
+    *) if [ "${WANT_HOST:-0}" = 1 ]; then HOST="$a"; WANT_HOST=0;
+       else echo "unknown option: $a" >&2; exit 2; fi ;;
   esac
 done
+
+# Claude Code and Codex take the SAME hook structure --
+#   {"hooks": {"SessionEnd": [{"hooks": [{"type","command","timeout"}]}]}}
+# -- in different files. That is the entire difference between the two hosts,
+# so the registration code below is shared and only these three lines vary.
+HOST="${HOST:-}"
+if [ -z "$HOST" ]; then
+  if   [ -f "$HOME/.claude/settings.json" ]; then HOST=claude
+  elif [ -f "$HOME/.codex/hooks.json" ];     then HOST=codex
+  else HOST=claude; fi
+fi
+case "$HOST" in
+  claude) RECALL_HOST_DIR="${RECALL_HOST_DIR:-$HOME/.claude}"
+          SETTINGS="$RECALL_HOST_DIR/settings.json"; DEFAULT_BIN=claude ;;
+  codex)  RECALL_HOST_DIR="${RECALL_HOST_DIR:-$HOME/.codex}"
+          SETTINGS="$RECALL_HOST_DIR/hooks.json";    DEFAULT_BIN=codex ;;
+  *) echo "unknown host: $HOST (expected claude or codex)" >&2; exit 2 ;;
+esac
+SKILL_DEST="${RECALL_SKILL_DEST:-$RECALL_HOST_DIR/skills/compound}"
 
 say() { printf '%s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing dependency: $1" >&2; exit 1; }; }
@@ -71,8 +91,8 @@ json.dump(d, open(p, "w"), indent=2)
 print("  hooks removed")
 PY
   # Only ever remove our own symlink, never a directory someone put there.
-  if [ -L "$COMPOUND_SKILL_DEST" ]; then
-    rm -f "$COMPOUND_SKILL_DEST"; say "  /compound skill unlinked"
+  if [ -L "$SKILL_DEST" ]; then
+    rm -f "$SKILL_DEST"; say "  /compound skill unlinked"
   fi
   if command -v launchctl >/dev/null 2>&1; then
     launchctl bootout "gui/$(id -u)/ai.okwow.recall-drain" 2>/dev/null || true
@@ -87,12 +107,13 @@ fi
 
 # --------------------------------------------------------------------- plan --
 say ""
-say "okWOW • Recall — install plan"
+say "okWOW • Recall — install plan  (host: $HOST)"
 say ""
 say "  repo         $REPO_DIR"
 say "  state        $RECALL_HOME            (created if absent)"
 say "  catalogs     $RECALL_CATALOG_DIR"
 say "  agent dir    $RECALL_HOST_DIR"
+say "  hook config  $SETTINGS"
 say ""
 say "  1. create $RECALL_HOME/{pending,processed,quarantine,digests,probe-state}"
 say "  2. seed empty catalogs if none exist (never overwrites)"
@@ -101,7 +122,7 @@ say "       SessionEnd        capture a finished session"
 say "       SessionStart      report queue + retrieval health"
 say "       UserPromptSubmit  match your prompt against the corpus"
 say "       PostToolUse       match file edits against the corpus"
-say "  4. install the /compound skill into $COMPOUND_SKILL_DEST"
+say "  4. install the /compound skill into $SKILL_DEST"
 say "  5. schedule the drain every 15 minutes"
 say ""
 say "  A backup of settings.json is written before any edit."
@@ -127,12 +148,12 @@ say "  state ready at $RECALL_HOME"
 # The drain invokes "/compound"; without this the loop captures and drains and
 # then writes nothing, leaving an empty corpus that looks like a quiet one.
 # Symlinked rather than copied so `git pull` updates the skill with the code.
-mkdir -p "$(dirname "$COMPOUND_SKILL_DEST")"
-if [ -e "$COMPOUND_SKILL_DEST" ] && [ ! -L "$COMPOUND_SKILL_DEST" ]; then
-  say "  a real directory already sits at $COMPOUND_SKILL_DEST — leaving it alone"
+mkdir -p "$(dirname "$SKILL_DEST")"
+if [ -e "$SKILL_DEST" ] && [ ! -L "$SKILL_DEST" ]; then
+  say "  a real directory already sits at $SKILL_DEST — leaving it alone"
 else
-  ln -sfn "$REPO_DIR/skills/compound" "$COMPOUND_SKILL_DEST"
-  say "  /compound skill linked -> $COMPOUND_SKILL_DEST"
+  ln -sfn "$REPO_DIR/skills/compound" "$SKILL_DEST"
+  say "  /compound skill linked -> $SKILL_DEST"
 fi
 
 cp "$SETTINGS" "$SETTINGS.recall-backup-$STAMP"
@@ -172,7 +193,8 @@ if command -v launchctl >/dev/null 2>&1; then
   <key>EnvironmentVariables</key>
   <dict><key>RECALL_HOME</key><string>$RECALL_HOME</string>
         <key>RECALL_CATALOG_DIR</key><string>$RECALL_CATALOG_DIR</string>
-        <key>RECALL_HOST_DIR</key><string>$RECALL_HOST_DIR</string></dict>
+        <key>RECALL_HOST_DIR</key><string>$RECALL_HOST_DIR</string>
+        <key>RECALL_AGENT_BIN</key><string>${RECALL_AGENT_BIN:-$DEFAULT_BIN}</string></dict>
   <key>StartInterval</key><integer>900</integer>
   <key>RunAtLoad</key><false/>
 </dict></plist>
