@@ -263,10 +263,7 @@ PENDING_DIR="$RECALL_HOME/pending"
 
 [ ! -d "$PENDING_DIR" ] && exit 0
 
-# Collect session-marker files only. Defensive exclusion of chapter-*.json:
-# chapter-end events live in $RECALL_HOME/chapters/ now, but guard
-# against any that predate that split so they never inflate the count again.
-MARKERS=$(find "$PENDING_DIR" -maxdepth 1 -type f -name '*.json' ! -name 'chapter-*.json' 2>/dev/null)
+MARKERS=$(find "$PENDING_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null)
 [ -z "$MARKERS" ] && exit 0
 
 COUNT=$(echo "$MARKERS" | wc -l | tr -d ' ')

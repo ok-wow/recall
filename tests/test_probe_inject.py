@@ -43,8 +43,6 @@ REPO = Path(__file__).resolve().parent.parent
 _SKILL_DIR = os.environ.get("RECALL_SKILL_DIR")
 if _SKILL_DIR:
     HOOK = Path(_SKILL_DIR) / "recall-probe-inject.py"
-elif (REPO / "scripts" / "recall-probe-inject.py").exists():
-    HOOK = REPO / "scripts" / "recall-probe-inject.py"
 else:
     HOOK = REPO / "hooks" / "recall-probe-inject.py"
 

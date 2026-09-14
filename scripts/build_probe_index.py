@@ -111,10 +111,6 @@ def is_specific(token: str) -> bool:
     return len(token) >= LONE_WORD_SPECIFIC_LEN
 
 
-def normalize(token: str) -> str:
-    return " ".join(token.strip().split()).lower()
-
-
 def usable(token: str) -> bool:
     if len(token) < MIN_TOKEN_LEN:
         return False

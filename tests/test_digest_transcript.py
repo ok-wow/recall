@@ -164,10 +164,6 @@ rc, body = digest([cc_user("x" * 5000)])
 check("usable digest signals ok (exit 0)", rc == 0, f"rc={rc}")
 
 print()
-if FAILURES:
-    print(f"{len(FAILURES)} FAILED: {', '.join(FAILURES)}")
-    sys.exit(1)
-
 # --- input == output must be refused, never truncated -------------------------
 # The drain's retry path handed this script the same path twice: a marker already
 # digested has transcript_path pointing AT the digest. Opening the output
@@ -175,12 +171,10 @@ if FAILURES:
 # reduced copy. Measured 2026-09-13: 108689 bytes -> 0. Three independent audit
 # agents found it from different angles, which is what a silent data-loss bug
 # looks like from the outside.
-import os as _os
 import subprocess as _sp
-import tempfile as _tf
 
-_d = _tf.mkdtemp(prefix="digest-idem-")
-_src = _os.path.join(_d, "t.jsonl")
+_d = tempfile.mkdtemp(prefix="digest-idem-")
+_src = os.path.join(_d, "t.jsonl")
 with open(_src, "w") as _fh:
     for _i in range(400):
         _fh.write(json.dumps({"type": "user",
@@ -189,21 +183,28 @@ with open(_src, "w") as _fh:
                               "message": {"role": "assistant", "content": [
                                   {"type": "tool_use", "name": "Bash", "input": {}},
                                   {"type": "text", "text": "y" * 200}]}}) + "\n")
-_out = _os.path.join(_d, "digest.md")
-_script = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "digest_transcript.py")
-if not _os.path.exists(_script):
-    _script = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-                            "scripts", "digest_transcript.py")
+_out = os.path.join(_d, "digest.md")
+# SKILL_DIR already resolves this, and honours RECALL_SKILL_DIR. The old two-step
+# looked in tests/ first, which never holds the script, so the fallback always ran.
+_script = os.path.join(SKILL_DIR, "digest_transcript.py")
 _sp.run([sys.executable, _script, _src, _out], capture_output=True)
-_before = _os.path.getsize(_out)
-assert _before > 1000, f"setup failed: first digest was {_before} bytes"
+_before = os.path.getsize(_out)
+check("idempotence setup produced a real digest", _before > 1000, f"{_before} bytes")
 _r = _sp.run([sys.executable, _script, _out, _out], capture_output=True, text=True)
-_after = _os.path.getsize(_out)
-assert _after == _before, (
-    f"re-digesting in place destroyed the digest: {_before} -> {_after} bytes")
-assert _r.returncode != 0, "input == output must be refused with a non-zero exit"
-assert "same file" in (_r.stderr or ""), f"expected a clear refusal, got: {_r.stderr!r}"
+_after = os.path.getsize(_out)
+check("input == output does not truncate", _after == _before,
+      f"re-digesting in place destroyed the digest: {_before} -> {_after} bytes")
+check("input == output is refused", _r.returncode != 0)
+check("the refusal names the cause", "same file" in (_r.stderr or ""), repr(_r.stderr)[:80])
 import shutil as _sh
 _sh.rmtree(_d, ignore_errors=True)
 
+# The data-loss guard above used to sit AFTER this exit, so one unrelated red
+# fixture skipped the most load-bearing check in the file. It runs before the
+# verdict now, and reports through check() so a failure is tallied.
+if FAILURES:
+    print(f"{len(FAILURES)} FAILED: {', '.join(FAILURES)}")
+    sys.exit(1)
+
 print("all fixtures pass")
+
