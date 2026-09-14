@@ -30,25 +30,46 @@ pushes it — point it at a private repo, or at no repo.
 
 ## The shape of it
 
+Three ways in. One memory. Two ways out.
+
 ```mermaid
 flowchart TB
-    S["your session ends"] --> G{"real work<br/>in here?"}
-    G -->|no| X["dropped, with the reason recorded"]
-    G -->|yes| Q["queue"]
-    Q --> D["a fresh agent reads the whole session<br/>scheduled, unattended"]
-    D --> M[("your memory<br/>what was learned · what was decided")]
-    M --> P["PUSH<br/>matched against what you type<br/>arrives before you ask"]
-    M --> L["PULL<br/>you ask<br/>recall question"]
-    P --> N["your next session"]
-    L --> N
-    N -.->|and it ends too| S
+    subgraph LIVE["while you work"]
+        direction LR
+        T["every turn"]
+        T -->|"worth keeping?"| W["written now"]
+        T -->|"anything match this?"| R["recalled now"]
+    end
+
+    subgraph BACK["backstops, when the live path is missed"]
+        direction LR
+        P["context filling up<br/>sweep before it collapses"]
+        E["session ends<br/>queued"]
+    end
+
+    W --> M
+    P --> M
+    E --> Q["queue"]
+    Q -->|"every 15 min, unattended"| F["a fresh agent reads<br/>the whole session"]
+    F --> M
+
+    M[("your memory")] --> R
+    M --> A["you ask<br/>recall question"]
 
     style M fill:#1f6feb,stroke:#1f6feb,color:#fff
-    style N fill:#238636,stroke:#238636,color:#fff
+    style LIVE fill:#0d1117,stroke:#30363d,color:#c9d1d9
+    style BACK fill:#0d1117,stroke:#30363d,color:#8b949e
 ```
 
-The dotted line is the whole point. Every session feeds the next one, so the
-memory is deeper on Friday than it was on Monday without anyone maintaining it.
+**Capture is live, not a batch job at the end.** Every turn is a chance to write
+something down and a chance to get something back. The two backstops exist
+because the live path gets missed — a session that ends without capturing
+anything is queued for an unattended pass, and a session about to lose its
+context gets swept first.
+
+That matters more than it sounds. A lesson captured at the moment it is learned
+carries what it actually cost. The same lesson reconstructed from a transcript
+three hours later carries a summary of it.
 
 Recalling has two halves, and **you need both**. Most memory tools ship one.
 
