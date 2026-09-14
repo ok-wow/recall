@@ -116,7 +116,7 @@ case "$reply" in y|Y|yes|YES) ;; *) say "aborted"; exit 0 ;; esac
 # ------------------------------------------------------------------ install --
 mkdir -p "$RECALL_HOME"/{pending,processed,quarantine,digests,probe-state}
 mkdir -p "$RECALL_CATALOG_DIR"
-for c in FAILURE_MODES PROCESS_FAILURES; do
+for c in FAILURE_MODES PROCESS_FAILURES DECISIONS; do
   f="$RECALL_CATALOG_DIR/$c.yaml"
   # Never clobber a corpus. An install that can destroy months of captured work
   # is worse than one that fails.

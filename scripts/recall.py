@@ -37,7 +37,11 @@ from pathlib import Path
 
 RECALL_HOME = Path(os.environ.get("RECALL_HOME") or Path.home() / ".recall")
 CATALOG_DIR = Path(os.environ.get("RECALL_CATALOG_DIR") or RECALL_HOME / "catalogs")
-CATALOGS = {"FM": "FAILURE_MODES.yaml", "PF": "PROCESS_FAILURES.yaml"}
+# DE holds decisions and stated preferences rather than failures: what was
+# chosen, what was rejected, and why. A failure log tells you what broke; it
+# never tells you how the person you work with makes up their mind.
+CATALOGS = {"FM": "FAILURE_MODES.yaml", "PF": "PROCESS_FAILURES.yaml",
+            "DE": "DECISIONS.yaml"}
 PROBE_INDEX = Path(os.environ.get("RECALL_PROBE_INDEX")
                    or RECALL_HOME / "probe-index.json").expanduser()
 
@@ -192,13 +196,19 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None, ful
     rec = f"  ×{e['recurrences'] + 1}" if e["recurrences"] else ""
     head = f"{e['id']}{rec}"
     print(f"\n{head}\n{tag}" + (f"  score {score:.1f}  matched: {', '.join(hits[:6])}" if score is not None else ""))
-    body = r.get("what") or r.get("failure") or r.get("summary") or r.get("symptom") or r.get("trigger") or ""
+    # "decided"/"why" are the DECISIONS shape; without them a decision entry
+    # retrieves correctly and then prints an empty body, which reads as a bug.
+    body = (r.get("what") or r.get("failure") or r.get("summary") or r.get("symptom")
+            or r.get("trigger") or r.get("decided") or "")
     body = " ".join(str(body).split())
     print("  " + (body if full else body[:400] + ("…" if len(body) > 400 else "")))
-    fix = r.get("fix_pattern") or r.get("fix") or ""
+    fix = r.get("fix_pattern") or r.get("fix") or r.get("why") or ""
     if fix:
         fix = " ".join(str(fix).split())
-        print("  FIX: " + (fix if full else fix[:300] + ("…" if len(fix) > 300 else "")))
+        # A decision has a reason, not a fix. Printing "FIX:" over a rationale
+        # tells the reader the wrong thing about what they are looking at.
+        label = "WHY" if e["catalog"] == "DE" else "FIX"
+        print(f"  {label}: " + (fix if full else fix[:300] + ("…" if len(fix) > 300 else "")))
     if full and e["probe_when"]:
         print("  PROBE WHEN:")
         for p in e["probe_when"]:

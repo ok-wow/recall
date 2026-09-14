@@ -33,6 +33,7 @@ CATALOG_DIR = env_path("RECALL_CATALOG_DIR", RECALL_HOME / "catalogs")
 CATALOGS = {
     "FM": CATALOG_DIR / "FAILURE_MODES.yaml",
     "PF": CATALOG_DIR / "PROCESS_FAILURES.yaml",
+    "DE": CATALOG_DIR / "DECISIONS.yaml",
 }
 # Honour the override the suite has been setting all along. Until 2026-09-14
 # nothing read RECALL_PROBE_INDEX, so test_recall believed it had redirected the
@@ -130,7 +131,7 @@ def usable(token: str) -> bool:
 
 
 def summarize(entry: dict) -> str:
-    for field in ("summary", "trigger", "what_failed", "context"):
+    for field in ("summary", "trigger", "what_failed", "context", "decided"):
         v = entry.get(field)
         if isinstance(v, str) and v.strip():
             return " ".join(v.split())[:400]
@@ -138,7 +139,7 @@ def summarize(entry: dict) -> str:
 
 
 def remedy(entry: dict) -> str:
-    for field in ("fix_pattern", "fix", "affected_pattern"):
+    for field in ("fix_pattern", "fix", "affected_pattern", "why"):
         v = entry.get(field)
         if isinstance(v, str) and v.strip():
             return " ".join(v.split())[:400]

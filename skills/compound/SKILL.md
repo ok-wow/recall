@@ -174,6 +174,80 @@ the way out.
 
 ---
 
+## Step 3b — The decisions pass
+
+Run this after the failure pass, on the same session. It asks a different
+question, and it is the one a failure log can never answer:
+
+> **What did they decide, and why — and what did they turn down to get there?**
+
+A corpus of failures tells the next agent what breaks. It never tells them how
+the person they work with makes up their mind, so every session re-litigates
+settled questions. That is the expensive kind of forgetting.
+
+Write to `DECISIONS.yaml`:
+
+```yaml
+- id: kebab-case-statement-of-what-was-decided
+  decided: The thing that is now true.
+  instead_of: The alternative that was on the table and lost.
+  why: |
+    The reason, in their terms, not yours. If they gave no reason, say so
+    rather than inventing a plausible one.
+  scope: personal          # personal | project | team
+  authority: stated        # stated | observed
+  date: 2026-09-14
+  probe_when:
+    - 'the same question comes up again, carrying `a-code-shaped-token`'
+```
+
+### The two fields that keep this honest
+
+**`authority`** is the whole safety of this pass.
+
+- `stated` — a person said it, in words, in this session. Quote or paraphrase
+  closely.
+- `observed` — you inferred it from what happened. A choice that was made
+  without being discussed.
+
+An `observed` preference is a hypothesis. Never write one as `stated`, and
+never let one become a rule that constrains future work on its own. It waits
+for a person to confirm it.
+
+**`scope`** starts at `personal` and stays there. This pass does not promote
+anything to team or organisation knowledge — that needs an explicit decision by
+someone with the authority to make it, and the point of recording scope is to
+make that promotion a deliberate act rather than a side effect of distillation.
+
+### What qualifies
+
+- A decision with a reason, especially one that overturned the obvious choice.
+- **A reversal.** "We did X, now we do Y, because Z" is the single most
+  valuable thing in this catalog — it encodes a lesson twice over.
+- A stated preference about how work should be done, look, or read.
+- A constraint the person holds that is not written in any repo: what they will
+  not ship, what they always want checked first.
+- A rejected alternative *with the reason it was rejected*. Without the reason
+  it is trivia.
+
+### What does not
+
+- Anything you inferred from a single instance and cannot name the evidence for.
+- A restatement of what the code already says.
+- Praise, agreement, or a decision with no alternative — if nothing was turned
+  down, no decision was made.
+- Anything about the person that is not about the work.
+
+### Same discipline as the failure pass
+
+Search first — `recall.py "<the decision in plain words>"` — and if the
+decision already exists and has now **changed**, that is a reversal: update the
+existing entry and record the previous position in `instead_of`. A corpus that
+holds both halves of a reversal as separate rows will confidently serve the
+obsolete one.
+
+---
+
 ## Step 4 — Verify the write, then commit
 
 Never report a capture you did not confirm landed.
