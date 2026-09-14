@@ -42,35 +42,53 @@ HEDGES = {"should", "could", "might", "may", "perhaps", "possibly", "probably"}
 fails: list[str] = []
 
 
-def rule_lines(text: str) -> list[tuple[int, str]]:
-    """Every line that is BINDING: prose outside blockquotes, fences and tables."""
-    out, in_fence, in_html = [], False, False
+def rule_units(text: str) -> list[tuple[int, str]]:
+    """Every BINDING unit: a PARAGRAPH outside blockquotes, fences and tables.
+
+    Paragraphs, not lines. Markdown wraps a sentence across lines, so a
+    line-based check counts words per line instead of per sentence -- it
+    under-reports a long sentence and points at the wrong line. This checker
+    passed its first target only because that file happened to be written one
+    sentence per line, which is an accident of authorship, not a property of
+    the check.
+    """
+    out, buf, buf_ln = [], [], 0
+    in_fence = in_html = False
     lines = text.splitlines()
-    # skip frontmatter
     start = 0
     if lines and lines[0].strip() == "---":
         for i in range(1, len(lines)):
             if lines[i].strip() == "---":
                 start = i + 1
                 break
+
+    def flush():
+        if buf:
+            out.append((buf_ln, " ".join(buf)))
+            buf.clear()
+
     for n, raw in enumerate(lines[start:], start=start + 1):
-        s = raw.strip()
-        if s.startswith("```"):
-            in_fence = not in_fence
-            continue
+        s_ = raw.strip()
+        if s_.startswith("```"):
+            flush(); in_fence = not in_fence; continue
         if in_fence:
             continue
-        if "<!--" in s:
-            in_html = True
+        if "<!--" in s_:
+            flush(); in_html = True
         if in_html:
-            if "-->" in s:
+            if "-->" in s_:
                 in_html = False
             continue
-        if not s or s.startswith(">") or s.startswith("#") or s.startswith("|"):
-            continue          # blockquote = the human half; heading/table = labels
-        if s.startswith("---"):
-            continue
-        out.append((n, s))
+        if (not s_ or s_.startswith(">") or s_.startswith("#")
+                or s_.startswith("|") or s_.startswith("---")):
+            flush(); continue
+        # A new list item or numbered step begins a new unit.
+        if s_[:2] in ("- ", "* ") or (s_[:2].rstrip(".").isdigit() and ". " in s_[:4]):
+            flush()
+        if not buf:
+            buf_ln = n
+        buf.append(s_)
+    flush()
     return out
 
 
@@ -85,7 +103,7 @@ def check_file(path: Path) -> None:
     if f"prose_standard: {STANDARD}" not in text:
         return
     rel = path.relative_to(ROOT)
-    for n, line in rule_lines(text):
+    for n, line in rule_units(text):
         low = line.lower()
         if ";" in line:
             fails.append(f"{rel}:{n} semicolon in a rule line — split the sentence")
@@ -115,13 +133,21 @@ CONTROLS = [
     ("a phrasal verb", "Look up the entry before you write.", True),
     ("a hedge", "You should run the command first.", True),
     ("a clean rule", "Run the command before you write.", False),
+    # The flaw this checker shipped with: one sentence WRAPPED over two lines is
+    # under 20 words per line and over it when joined. A line-based check passes
+    # this; a paragraph-based one must not.
+    ("a sentence wrapped across two lines",
+     "Run the command and then read the output and then write\n"
+     "the entry and then commit the result and report it.", True),
+    ("two short sentences on two lines stay clean",
+     "Run the command.\nRead the output.", False),
 ]
 for label, text, want_fail in CONTROLS:
     before = len(fails)
     probe = ROOT / "skills" / "_control" / "SKILL.md"
     saved = fails[:]
     fails.clear()
-    for n, line in rule_lines(f"---\nprose_standard: {STANDARD}\n---\n{text}\n"):
+    for n, line in rule_units(f"---\nprose_standard: {STANDARD}\n---\n{text}\n"):
         low = line.lower()
         if ";" in line:
             fails.append("semicolon")
