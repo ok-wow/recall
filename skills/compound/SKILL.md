@@ -127,7 +127,7 @@ Append one list item:
   probe_when:
     - 'a sentence describing the moment, carrying `a-code-shaped-token`'
     - '`some_command --flag` appears in the work'
-  probe_type: agent-behavior      # or: runtime-execution-required, static-analysis-could-catch
+  probe_class: judgment           # static | runtime | judgment — these three only
   recurrences: 0
 ```
 
@@ -153,6 +153,24 @@ Two rules learned the hard way:
 
 If a lesson genuinely has no code-shaped token, write it anyway in prose.
 `recall` reaches the whole corpus; only auto-injection is limited.
+
+### probe_class has exactly three values
+
+| value | meaning |
+|---|---|
+| `static` | a check on the code or the diff could have caught it |
+| `runtime` | it had to actually run before anyone could see it |
+| `judgment` | a person or agent had to notice; no mechanical trigger exists |
+
+**Use these three and nothing else.** The corpus this was extracted from left the
+equivalent field as free text, and it grew to 129 distinct values across 680
+entries — 80 of them used exactly once. At that point the field cannot be
+grouped, counted, or filtered, and it cannot be repaired afterwards either: a
+classifier trained on those labels scores 57% against a 43% majority-class
+baseline, so backfilling it means writing wrong values that look like data.
+
+A vocabulary is cheap to constrain on the way in and impossible to recover on
+the way out.
 
 ---
 
