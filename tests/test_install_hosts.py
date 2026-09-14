@@ -94,7 +94,7 @@ try:
 finally:
     shutil.rmtree(_h, ignore_errors=True)
 
-TOTAL = 9 * 2 + 2
+TOTAL = 10 * 2 + 2
 if fails:
     print(f"FAIL {len(fails)} check(s):")
     for f in fails:

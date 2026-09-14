@@ -129,7 +129,7 @@ check("scanner resolves $SKILL_DIR against scripts/, not the referring dir",
 check("scanner does not flag a skill that IS shipped",
       missing_skills('-p "/compound abc"', skill_exists) == set())
 
-total = 6 + 4
+total = 5 + 4
 if fails:
     print(f"FAIL {len(fails)} check(s):")
     for f in fails:

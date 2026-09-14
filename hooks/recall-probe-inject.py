@@ -63,7 +63,7 @@ MIN_SCORE = 3.0
 # genuinely identify a situation (`allow-same-origin`, `getcomputedstyle`,
 # `merge-base --is-ancestor`) and drops the rest. It also matches the index
 # builder's own LONE_WORD_SPECIFIC_LEN, which the two had silently diverged on.
-LONE_TOKEN_MIN_LEN = 12
+LONE_TOKEN_MIN_LEN = 14
 
 # Length alone is the wrong test: `table=true` is 10 characters and genuinely
 # identifies a SQLModel situation, while `origin/main` is 11 and identifies

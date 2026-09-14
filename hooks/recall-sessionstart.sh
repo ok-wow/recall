@@ -150,7 +150,8 @@ if [ -x "$PROBE_BUILDER" ] || [ -r "$PROBE_BUILDER" ]; then
         PROBE_STALE=1
     else
         for c in "$RECALL_CATALOG_DIR/FAILURE_MODES.yaml" \
-                 "$RECALL_CATALOG_DIR/PROCESS_FAILURES.yaml"; do
+                 "$RECALL_CATALOG_DIR/PROCESS_FAILURES.yaml" \
+                 "$RECALL_CATALOG_DIR/DECISIONS.yaml"; do
             if [ -f "$c" ] && [ "$c" -nt "$PROBE_INDEX" ]; then
                 PROBE_STALE=1
             fi

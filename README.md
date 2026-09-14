@@ -149,7 +149,7 @@ A few that shaped the design:
 python3 -m tests.run    # or: for t in tests/test_*.py; do python3 "$t"; done
 ```
 
-Six suites. They assert behaviour that matters rather than coverage: that a correct no-op is
+Seven suites. They assert behaviour that matters rather than coverage: that a correct no-op is
 distinguishable from a failure, that housekeeping runs on the idle path, that a test cannot
 write to production state, and that an entry written in prose is still retrievable.
 

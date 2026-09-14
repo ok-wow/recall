@@ -37,13 +37,15 @@ INPUT=$(cat)
 # dynamically slips past it. This sweep safe_loads every knowledge file at
 # session end regardless of how it was written; a break writes a marker the
 # SessionStart hook surfaces next session.
+# The three catalogs and nothing else. Four other paths used to be listed here
+# -- learnings.yaml, extracted_registry.yaml, artifacts_registry.yaml,
+# orphans/learnings.yaml -- carried over from the system this was extracted
+# from. Nothing in this repo creates, reads or documents any of them, so the
+# sweep was checking four files that never exist.
 SWEEP_FILES=(
   "$RECALL_CATALOG_DIR/FAILURE_MODES.yaml"
   "$RECALL_CATALOG_DIR/PROCESS_FAILURES.yaml"
-  "$RECALL_HOME/learnings.yaml"
-  "$RECALL_HOME/extracted_registry.yaml"
-  "$RECALL_HOME/artifacts_registry.yaml"
-  "$RECALL_HOME/orphans/learnings.yaml"
+  "$RECALL_CATALOG_DIR/DECISIONS.yaml"
 )
 SWEEP_EXISTING=()
 for f in "${SWEEP_FILES[@]}"; do [ -f "$f" ] && SWEEP_EXISTING+=("$f"); done
@@ -64,7 +66,7 @@ if bad:
     sys.exit(1)
 PY
   ); then
-    rm -f "$BROKEN_MARKER"   # all six parse — clear any stale marker
+    rm -f "$BROKEN_MARKER"   # all three parse — clear any stale marker
   else
     printf '%s' "$SWEEP_BAD" > "$BROKEN_MARKER"
     printf 'recall: SessionEnd safe_load sweep found broken knowledge YAML: %s\n' "$SWEEP_BAD" >&2

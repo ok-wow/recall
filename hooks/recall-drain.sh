@@ -72,37 +72,6 @@ DRAIN_VERSION="3"
 # authenticate, and the retry path moved 60 sessions into quarantine rather
 # than saying so. `setup-token` issues a long-lived token that does not
 # depend on a refreshable session; keep it here at 0600 and load it per run.
-CREDS="${RECALL_DRAIN_CREDENTIALS:-$RECALL_HOME/drain-credentials}"
-# This file used to be `.`-sourced, which runs arbitrary shell as you every 15
-# minutes from launchd -- and a line in it could reassign $PERMISSIONS and point
-# the worker at a decoy deny list, defeating the guard below. It now yields only
-# KEY=VALUE, and only from a file that is yours and mode 0600, because a token
-# readable by other local users is not a secret.
-if [ -e "$CREDS" ]; then
-  _cmode=$(stat -f '%Lp' "$CREDS" 2>/dev/null || stat -c '%a' "$CREDS" 2>/dev/null || echo "")
-  _cown=$(stat -f '%u' "$CREDS" 2>/dev/null || stat -c '%u' "$CREDS" 2>/dev/null || echo "")
-  if [ "$_cown" != "$(id -u)" ]; then
-    log "abort: $CREDS is not owned by $(id -un) — refusing to read it"
-    exit 0
-  elif [ "$_cmode" != "600" ]; then
-    log "abort: $CREDS is mode ${_cmode:-unknown}, expected 600 — run: chmod 600 '$CREDS'"
-    exit 0
-  else
-    # Only NAME=VALUE lines, one variable per line, nothing executed.
-    while IFS= read -r _line || [ -n "$_line" ]; do
-      case "$_line" in
-        ''|\#*) continue ;;
-        [A-Za-z_]*=*)
-          _k=${_line%%=*}
-          case "$_k" in *[!A-Za-z0-9_]*) continue ;; esac
-          _v=${_line#*=}
-          _v=${_v%\"}; _v=${_v#\"}; _v=${_v%\'}; _v=${_v#\'}
-          export "$_k=$_v"
-          ;;
-      esac
-    done < "$CREDS"
-  fi
-fi
 AUTH_DOWN_MARKER="$RECALL_HOME/auth-down.json"
 # The per-session "this was processed" record. Its absence is the root cause
 # behind two separate failures three months apart: in June, SessionEnd
@@ -165,6 +134,43 @@ export HOME="${HOME:-$(eval echo ~"$(id -un)")}"
 export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG"; }
+
+# BELOW log() ON PURPOSE. This block aborts via log(), and on macOS an
+# undefined log() resolves to /usr/bin/log, which prints its own usage to
+# stderr and returns 0 -- so the abort vanished and the drain died silently.
+# The fail-closed guard further down carries the same warning; this is the
+# second time the same trap was walked into in the same file.
+CREDS="${RECALL_DRAIN_CREDENTIALS:-$RECALL_HOME/drain-credentials}"
+# This file used to be `.`-sourced, which runs arbitrary shell as you every 15
+# minutes from launchd -- and a line in it could reassign $PERMISSIONS and point
+# the worker at a decoy deny list, defeating the guard below. It now yields only
+# KEY=VALUE, and only from a file that is yours and mode 0600, because a token
+# readable by other local users is not a secret.
+if [ -e "$CREDS" ]; then
+  _cmode=$(stat -f '%Lp' "$CREDS" 2>/dev/null || stat -c '%a' "$CREDS" 2>/dev/null || echo "")
+  _cown=$(stat -f '%u' "$CREDS" 2>/dev/null || stat -c '%u' "$CREDS" 2>/dev/null || echo "")
+  if [ "$_cown" != "$(id -u)" ]; then
+    log "abort: $CREDS is not owned by $(id -un) — refusing to read it"
+    exit 0
+  elif [ "$_cmode" != "600" ]; then
+    log "abort: $CREDS is mode ${_cmode:-unknown}, expected 600 — run: chmod 600 '$CREDS'"
+    exit 0
+  else
+    # Only NAME=VALUE lines, one variable per line, nothing executed.
+    while IFS= read -r _line || [ -n "$_line" ]; do
+      case "$_line" in
+        ''|\#*) continue ;;
+        [A-Za-z_]*=*)
+          _k=${_line%%=*}
+          case "$_k" in *[!A-Za-z0-9_]*) continue ;; esac
+          _v=${_line#*=}
+          _v=${_v%\"}; _v=${_v#\"}; _v=${_v%\'}; _v=${_v#\'}
+          export "$_k=$_v"
+          ;;
+      esac
+    done < "$CREDS"
+  fi
+fi
 
 # FAIL CLOSED. The worker runs --permission-mode auto so Stage 4 can commit
 # without a human to approve each write; that is only defensible while the deny
@@ -438,7 +444,10 @@ while :; do
       # Ledger write failed: keep the marker. Losing the session is worse than
       # processing it twice.
       log "warn: could not write processed record for $SESSION — marker left queued"
+    fi
 
+    # Reached only when the run did NOT exit 0 cleanly, which is what makes the
+    # outage scan safe to run at all.
     if grep -qiE "$INFRA_RE" "$RUNLOG"; then
       REASON=$(grep -iEm1 "$INFRA_RE" "$RUNLOG")
       rm -f "$RUNLOG"
@@ -449,7 +458,7 @@ while :; do
       log "infra-down: $REASON — halting run, $SESSION left queued, no attempt consumed"
       break
     fi
-    fi
+
     rm -f "$RUNLOG"
     # The marker survived a real failure (killed, or non-zero exit). The loop
     # always takes the oldest, so leaving it in

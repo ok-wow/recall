@@ -35,8 +35,11 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-RECALL_HOME = Path(os.environ.get("RECALL_HOME") or Path.home() / ".recall")
-CATALOG_DIR = Path(os.environ.get("RECALL_CATALOG_DIR") or RECALL_HOME / "catalogs")
+# .expanduser() on both: build_probe_index.py and recall-probe-inject.py already
+# do it, so RECALL_CATALOG_DIR=~/x used to index fine and then read as missing.
+RECALL_HOME = Path(os.environ.get("RECALL_HOME") or Path.home() / ".recall").expanduser()
+CATALOG_DIR = Path(os.environ.get("RECALL_CATALOG_DIR")
+                   or RECALL_HOME / "catalogs").expanduser()
 # DE holds decisions and stated preferences rather than failures: what was
 # chosen, what was rejected, and why. A failure log tells you what broke; it
 # never tells you how the person you work with makes up their mind.
@@ -271,7 +274,11 @@ def main() -> int:
     if a.id:
         m = [e for e in entries if e["id"] == a.id or e["key"] == a.id]
         if not m:
-            near = [e["id"] for e in entries if a.id.lower() in e["id"].lower()][:5]
+            # str() on both sides: a catalog may carry `id: 12345` or a bare YAML
+            # date, and load_entries admits any truthy id. .lower() on an int
+            # crashed this "did you mean" scan with a raw traceback.
+            near = [str(e["id"]) for e in entries
+                    if a.id.lower() in str(e["id"]).lower()][:5]
             sys.stderr.write(f"recall: no entry '{a.id}'" + (f"\n  did you mean: {', '.join(near)}\n" if near else "\n"))
             return 1
         if a.json:
