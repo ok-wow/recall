@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":[]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text"}]}}

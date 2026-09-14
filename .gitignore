@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.DS_Store
+# Never commit a corpus. This repo is the mechanism; the content is personal.
+catalogs/*.yaml
+!catalogs/.gitkeep
