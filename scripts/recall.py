@@ -196,6 +196,33 @@ def indexed_keys() -> set[str]:
         return set()
 
 
+
+# Known names win, in priority order, because the RIGHT field should lead. But
+# the corpus holds 80+ content-bearing field names with a long tail used once
+# each -- evidence, cause, observed, how_to_apply, wrong_behavior, mechanism --
+# and every hand-written list drifts behind the data within weeks. So when no
+# known name matches, fall back to the longest unknown string on the entry.
+# Self-healing: a field invented tomorrow displays tomorrow.
+_META = {
+    "id", "key", "catalog", "repo", "scope", "artifact", "date", "logged",
+    "compounded_at", "source_session", "session", "probe_when", "probe_type",
+    "probe_class", "failure_class", "recurrences", "caught_in", "related",
+    "pr", "type", "title", "applies_to", "supersedes", "doctrine_link",
+    "related_entry", "related_meta_learning", "verified_by_test",
+    "verified_by_check", "discovered", "domain", "tell", "gap_found",
+}
+
+
+def _longest_unknown(raw: dict, used: str = "") -> str:
+    best = ""
+    for k, v in raw.items():
+        if k in _META or k == used or not isinstance(v, str):
+            continue
+        if len(v.strip()) > len(best):
+            best = v.strip()
+    return best if len(best) >= 40 else ""
+
+
 def show(e: dict, score: float | None = None, hits: list[str] | None = None, full: bool = False) -> None:
     r = e["raw"]
     tag = f"  [{e['catalog']}]"
@@ -210,12 +237,14 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None, ful
     # know the names. A reader that does not know a field treats it as absent.
     body = (r.get("what") or r.get("failure") or r.get("summary") or r.get("symptom")
             or r.get("trigger") or r.get("decided") or r.get("pattern")
-            or r.get("consequence") or "")
+            or r.get("consequence") or r.get("observed") or r.get("cause")
+            or r.get("what_happened") or _longest_unknown(r) or "")
     body = " ".join(str(body).split())
     print("  " + (body if full else body[:400] + ("…" if len(body) > 400 else "")))
     fix = (r.get("fix_pattern") or r.get("fix") or r.get("why") or r.get("remedy")
            or r.get("rule") or r.get("lesson") or r.get("doctrine")
-           or r.get("workaround") or "")
+           or r.get("workaround") or r.get("how_to_apply")
+           or r.get("correct_behavior") or "")
     if fix:
         fix = " ".join(str(fix).split())
         # A decision has a reason, not a fix. Printing "FIX:" over a rationale
