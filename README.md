@@ -1,19 +1,34 @@
 # okWOW • Recall
 
-A coding agent solves a problem, you close the session, and the solution is gone. Next
-week it hits the same wall and works it out again from scratch. **okWOW • Recall** is a loop that
-turns finished sessions into a searchable corpus of failure modes, and puts the relevant
-ones back in front of the agent while it works.
+**Your agent is brilliant every day. Every day it starts from nothing.**
 
-The corpus is a file on your disk. This tool never uploads it, and there is no
-account, no telemetry and no server.
+It untangled that race condition on Tuesday. It worked out why the build only fails
+on CI. It learned which of your conventions are real and which are three years stale.
 
-It is not, however, airtight, and the honest version matters: **distillation is a
-model call.** The drain hands a finished transcript — or a digest of one — to
-whichever agent CLI you configured, which sends it to that provider exactly as an
-interactive session would. And if your catalog directory is a git checkout, the
-worker commits and pushes it, because otherwise months of captured work sits
-uncommitted. Point it at a private repo, or at no repo.
+Then the session ended, and all of it went away.
+
+So next week it hits the same wall, and pays the same hour again — while you sit
+there knowing you have watched this exact debugging session before.
+
+### Recall is the memory.
+
+It notices when a session ends. It works out what was actually learned — not what
+happened, what was *learned*. And the next time that lesson matters, it is already
+in front of your agent, before anyone thinks to ask.
+
+Your agent stops solving the same problem twice.
+
+---
+
+Everything stays on your machine. The corpus is a file on your disk — no account,
+no telemetry, no server, nothing to sign up for.
+
+One caveat, stated plainly because you would find it anyway: **distilling a session
+is a model call.** Recall hands the finished transcript to whichever agent CLI you
+already use, which sends it to that provider exactly as your interactive session
+did. That is the one place your work leaves the machine, and it is the same place it
+was already going. If your catalogs live in a git checkout, the worker commits and
+pushes them — point it at a private repo, or at no repo.
 
 ## The shape of it
 
