@@ -50,7 +50,19 @@ matching lessons.
 ## Install
 
 ```bash
-git clone <this repo> ~/recall && cd ~/recall && ./install.sh
+git clone https://github.com/ok-wow/recall.git ~/recall && cd ~/recall && ./install.sh
+```
+
+The repo is private to the okWOW org, so you need org access on the GitHub
+account your `git` is authenticated as.
+
+If you would rather your agent did it, paste this — note that it points the agent
+at the installer instead of describing the steps, so you still get the plan, the
+backup, and a working `--uninstall`:
+
+```
+Clone https://github.com/ok-wow/recall into ~/recall and run ./install.sh.
+Show me the plan it prints before you answer yes.
 ```
 
 Works with **Claude Code** and **Codex**. The host is detected from whichever
@@ -66,22 +78,33 @@ The skill is the half that decides what gets written down. Without it the loop s
 captures and drains, and then writes nothing — an empty corpus is indistinguishable from
 a quiet one, so it is linked at install time rather than left as a manual step.
 
-Requires Python 3.9+, PyYAML, and an agent CLI that supports session hooks.
+Requires Python 3.9+, PyYAML, and an agent CLI that supports session hooks. CI runs
+the suites on 3.9 through 3.13 on every push, so that floor is tested rather than
+claimed — it went untested for months before anyone checked.
 
 ## Use
 
+`install.sh` does not put anything on your `PATH` — it makes exactly one symlink,
+and that is the skill. So the tool is called by path:
+
 ```bash
 # ask the corpus — plain language, no query syntax
-recall "test passes on CI but fails locally"
+python3 ~/recall/scripts/recall.py "test passes on CI but fails locally"
 
 # one entry in full, with the triggers that make it fire
-recall --id test-runner-inherits-ambient-timezone
+python3 ~/recall/scripts/recall.py --id test-runner-inherits-ambient-timezone
 
 # what has repeated ANYWAY, despite being written down
-recall --recurring
+python3 ~/recall/scripts/recall.py --recurring
 
 # corpus and retrieval health
-recall --stats
+python3 ~/recall/scripts/recall.py --stats
+```
+
+Worth one line in your shell profile if you use it by hand:
+
+```bash
+alias recall='python3 ~/recall/scripts/recall.py'
 ```
 
 Everything else is automatic. Sessions get captured when they end, distilled on a schedule,
@@ -97,6 +120,11 @@ Every path resolves through an environment variable with a default. No absolute 
 | `RECALL_CATALOG_DIR` | `$RECALL_HOME/catalogs` | the YAML catalogs |
 | `RECALL_AGENT_BIN` | `claude` | CLI used for unattended distillation |
 | `RECALL_HOST_DIR` | `~/.claude` | your agent's dir (transcripts, settings) |
+
+Those are the four you are likely to set. Another dozen `RECALL_*` variables tune
+the drain's budgets, timeouts and paths; each is named and defaulted at the top of
+the script that reads it. `--host codex` switches the last two defaults to
+`~/.codex` and `codex`.
 
 ## What it deliberately does not do
 
@@ -149,7 +177,7 @@ A few that shaped the design:
 python3 -m tests.run    # or: for t in tests/test_*.py; do python3 "$t"; done
 ```
 
-Seven suites. They assert behaviour that matters rather than coverage: that a correct no-op is
+Eight suites. They assert behaviour that matters rather than coverage: that a correct no-op is
 distinguishable from a failure, that housekeeping runs on the idle path, that a test cannot
 write to production state, and that an entry written in prose is still retrievable.
 
