@@ -94,6 +94,7 @@ def load_entries() -> list[dict]:
         raise SystemExit(2)
     entries = []
     broken: list[dict] = []
+    parsed = 0
     for label, fname in CATALOGS.items():
         path = CATALOG_DIR / fname
         if not path.exists():
@@ -110,6 +111,7 @@ def load_entries() -> list[dict]:
             first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
             broken.append({"catalog": label, "path": str(path), "error": first})
             continue
+        parsed += 1
         if isinstance(data, dict):
             for v in data.values():
                 if isinstance(v, list):
@@ -149,6 +151,7 @@ def load_entries() -> list[dict]:
                 "probe_when": pw if isinstance(pw, list) else ([pw] if pw else []),
             })
     load_entries.broken = broken
+    load_entries.parsed = parsed
     return entries
 
 
@@ -232,7 +235,11 @@ def main() -> int:
         sys.stderr.write(
             f"recall: {b['catalog']} catalog did not parse and is EXCLUDED from these "
             f"results — {b['path']}: {b['error']}\n")
-    if not entries:
+    # A freshly installed corpus is EMPTY, and install.sh tells the user to run
+    # `recall.py --stats` first. Treating zero entries as "no readable catalogs"
+    # made a correct empty state indistinguishable from a broken install, and
+    # made the first command a new user runs exit non-zero with a wrong reason.
+    if not entries and not getattr(load_entries, "parsed", 0):
         sys.stderr.write(f"recall: no readable catalogs under {CATALOG_DIR}\n")
         return 2
 
@@ -247,7 +254,11 @@ def main() -> int:
             "recurrence_events": sum(e["recurrences"] for e in entries),
             "reachable_by_injection": len(entries) - len(unreachable),
             "unreachable_by_injection": len(unreachable),
-            "unreachable_pct": round(100 * len(unreachable) / len(entries), 1),
+            # 0.0 on an empty corpus rather than ZeroDivisionError: a fresh
+            # install has no entries and --stats is the first thing it is told
+            # to run. The old "no readable catalogs" guard returned early and
+            # hid this; removing that guard is what surfaced it.
+            "unreachable_pct": round(100 * len(unreachable) / len(entries), 1) if entries else 0.0,
             "unreachable_missing_probe_when": len(noprobe),
             "unreachable_despite_probe_when": len(unreachable) - len(noprobe),
             "reachable_by_recall": len(entries),

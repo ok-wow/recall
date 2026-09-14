@@ -184,6 +184,23 @@ def main() -> int:
     rc, out = run(d / "nonexistent-catalogs", "anything")
     check("missing catalogs errors loudly", rc == 2 and "no readable catalogs" in out)
 
+    # A FRESH INSTALL is empty, and install.sh tells the user to run --stats
+    # first. "Empty" and "unreadable" used to be the same branch, so the first
+    # command a new user ran exited 2 blaming the catalogs. They are different
+    # states and only one of them is an error.
+    _ed = d / "empty-corpus"
+    _ed.mkdir(exist_ok=True)
+    for _c in ("FAILURE_MODES", "PROCESS_FAILURES", "DECISIONS"):
+        (_ed / f"{_c}.yaml").write_text("[]\n")
+    for _flag in ("--stats", "--recurring", "--unreachable"):
+        rc, out = run(_ed, _flag)
+        check(f"empty corpus: {_flag} succeeds", rc == 0, f"rc={rc} {out[:90]}")
+    rc, out = run(_ed, "--stats", "--json")
+    check("empty corpus: stats report zero, not a crash",
+          rc == 0 and '"entries": 0' in out.replace("'", '"'), out[:90])
+    rc, out = run(_ed, "anything at all")
+    check("empty corpus: a query is a clean no-match", rc == 0, f"rc={rc}")
+
     if fails:
         print(f"\nFAIL {len(fails)}/{ran[0]}")
         for f in fails:

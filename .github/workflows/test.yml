@@ -1,0 +1,94 @@
+name: tests
+
+# The whole project argues that a green suite proves less than you think. Running
+# that suite only when somebody remembers to type the command is the same bug one
+# level up, so it runs here on every push and every pull request.
+#
+# The matrix is not decoration. The README claims Python 3.9+, and nothing had
+# ever tested it -- no 3.9 interpreter existed on the machine this was written on.
+# The floor of this matrix is what makes that claim checkable instead of asserted.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false        # a 3.9-only break should not hide a 3.13-only break
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the only dependency
+        run: python -m pip install --quiet pyyaml
+      - name: Run every suite
+        run: python -m tests.run
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax-check every shell script
+        run: |
+          set -euo pipefail
+          for f in hooks/*.sh install.sh; do
+            bash -n "$f" || exit 1
+          done
+          echo "all shell scripts parse"
+
+  fresh-clone:
+    # The suites above run in a checkout that already has the repo's layout. This
+    # job proves the thing a stranger actually does: clone, install nothing but
+    # PyYAML, and get a working loop. An earlier cut of this project passed every
+    # suite while shipping no /compound skill at all, so "the tests pass" and "a
+    # clone works" are separate claims and both get checked.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --quiet pyyaml
+      - name: Install into a throwaway HOME, then uninstall
+        run: |
+          set -euo pipefail
+          export HOME="$(mktemp -d)"
+          mkdir -p "$HOME/.claude" "$HOME/bin"
+          echo '{}' > "$HOME/.claude/settings.json"
+          printf '#!/bin/sh\nexit 0\n' > "$HOME/bin/launchctl"
+          chmod +x "$HOME/bin/launchctl"
+          export PATH="$HOME/bin:$PATH"
+          printf 'y\n' | ./install.sh --host claude
+          test -L "$HOME/.claude/skills/compound" || { echo "skill not linked"; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          d = json.load(open(os.environ["HOME"] + "/.claude/settings.json"))
+          want = {"SessionEnd", "SessionStart", "UserPromptSubmit", "PostToolUse"}
+          got = set(d.get("hooks", {}))
+          assert got == want, f"hooks registered: {sorted(got)}"
+          print("four hooks registered")
+          PY
+          ./install.sh --host claude --uninstall
+          test ! -e "$HOME/.claude/skills/compound" || { echo "uninstall left the skill"; exit 1; }
+          test -f "$HOME/.recall/catalogs/FAILURE_MODES.yaml" || { echo "uninstall ate the corpus"; exit 1; }
+          echo "install and uninstall both clean"
+
+      - name: Ask the empty corpus a question
+        run: |
+          set -euo pipefail
+          export RECALL_HOME="$(mktemp -d)"
+          mkdir -p "$RECALL_HOME/catalogs"
+          for c in FAILURE_MODES PROCESS_FAILURES DECISIONS; do
+            printf '[]\n' > "$RECALL_HOME/catalogs/$c.yaml"
+          done
+          python3 scripts/recall.py --stats
