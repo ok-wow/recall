@@ -167,6 +167,19 @@ Append one list item:
 
 `id` and `probe_when` are required. Everything else improves retrieval.
 
+**The `id` is a name, not a summary.** Keep it near 58 characters; treat 76 as
+the ceiling. Every rendering prints the `trigger` on the line directly below it,
+so an id that states the whole lesson only says the same thing twice — and a
+90-character id wraps in a table and stops being scannable. Name the *shape* of
+the failure, not the instance:
+
+| | |
+|---|---|
+| yes | `an-allowlist-grown-by-approving-inverts-risk` |
+| no | `an-allowlist-grown-by-clicking-approve-permits-the-irreversible-and-prompts-on-the-reversible` |
+
+Both retrieve identically. Only one of them reads.
+
 ### probe_when decides whether the entry can ever fire
 
 The indexer reads **only backticked tokens** from `probe_when`. An item written
