@@ -2,34 +2,42 @@
 
 **Your agent is brilliant every day. Every day it starts from nothing.**
 
-It found the number you needed, buried four tabs deep in someone else's spreadsheet.
-It worked out which of three conflicting documents is the one still in force. It
-learned that you rewrite every opening paragraph, so it stopped writing them that way.
+It worked out why the deploy only fails on Fridays. It found the decision from six
+weeks ago that everyone had forgotten making. It learned that you rejected that
+pricing frame, and why — so it stopped proposing it.
 
 Then the session ended, and all of it went away.
 
-So next week it hits the same wall, and pays the same hour again — while you sit
-there knowing you have watched this exact debugging session before.
+So next week you pay for it again: the same investigation, the same argument you
+already settled, the same hour you have watched go by before.
 
-### Recall is the memory.
+## Learn. Recall. Compound.
 
-It notices when a session ends. It works out what was actually learned — not what
-happened, what was *learned*. And the next time that lesson matters, it is already
-in front of your agent, before anyone thinks to ask.
+**Learn.** When a session ends, Recall works out what it actually taught — not what
+happened, what was *learned*. The thing that finally worked. The decision, and what
+it was chosen instead of. The approach that looked right and was abandoned, and why.
 
-Your agent stops solving the same problem twice.
+**Recall.** The next time that lesson matters, it is already in front of your agent.
+Not filed somewhere searchable. In front of it, before anyone thinks to ask.
+
+**Compound.** This is the one that matters. Every session starts further along than
+the last one did. The work stops resetting and starts accumulating — which is the
+only way a tool you use every day gets better instead of staying the same.
+
+Your agent stops solving the same problem twice, and starts building on what it
+already knows.
 
 ---
 
-Everything stays on your machine. The corpus is a file on your disk — no account,
+Everything stays on your machine. Your memory is a file on your disk — no account,
 no telemetry, no server, nothing to sign up for.
 
-One caveat, stated plainly because you would find it anyway: **distilling a session
-is a model call.** Recall hands the finished transcript to whichever agent CLI you
-already use, which sends it to that provider exactly as your interactive session
+One caveat, stated plainly because you would find it anyway: **working out what a
+session taught is a model call.** Recall hands the finished session to whichever
+agent you already use, which sends it to that provider exactly as your live session
 did. That is the one place your work leaves the machine, and it is the same place it
-was already going. If your catalogs live in a git checkout, the worker commits and
-pushes them — point it at a private repo, or at no repo.
+was already going. If your memory lives in a git checkout, the worker commits and
+pushes it — point it at a private repo, or at no repo.
 
 ## The shape of it
 
@@ -47,7 +55,8 @@ pushes them — point it at a private repo, or at no repo.
                   and injected automatically                   `recall "question"`
 ```
 
-Two halves, and **you need both**. This is the part most such systems get wrong.
+Recalling has two halves, and **you need both**. This is the part most such systems
+get wrong.
 
 **Push** is automatic and must be precise. It fires without being asked, so a false
 positive costs more than a miss — a channel that cries wolf gets ignored, and then the one
@@ -61,7 +70,7 @@ can never reach.
 
 Without pull, every lesson that is a *judgement* rather than a phrase — how this client
 likes to be handled, why that approach was abandoned — gets written down perfectly and
-never surfaces again. In the corpus this came from that was **43% of everything
+never surfaces again. In the memory this came from that was **43% of everything
 captured**, and nobody noticed for months. A memory that finds nothing looks exactly
 like a week where nothing was learned.
 
@@ -93,7 +102,7 @@ agent's skills directory, creates `~/.recall`, and schedules the drain. It print
 everything it is about to do and asks first.
 
 The skill is the half that decides what gets written down. Without it the loop still
-captures and drains, and then writes nothing — an empty corpus is indistinguishable from
+captures and drains, and then writes nothing — an empty memory is indistinguishable from
 a quiet one, so it is linked at install time rather than left as a manual step.
 
 Requires Python 3.9+, PyYAML, and an agent CLI that supports session hooks. CI runs
@@ -106,16 +115,16 @@ claimed — it went untested for months before anyone checked.
 and that is the skill. So the tool is called by path:
 
 ```bash
-# ask the corpus — plain language, no query syntax
+# ask your memory — plain language, no query syntax
 python3 ~/recall/scripts/recall.py "how do we handle a renewal that slipped"
 
 # one entry in full, with the triggers that make it fire
 python3 ~/recall/scripts/recall.py --id the-q3-figures-live-in-the-finance-sheet
 
-# what has repeated ANYWAY, despite being written down
+# what has repeated ANYWAY, despite being written down — the compounding scoreboard
 python3 ~/recall/scripts/recall.py --recurring
 
-# corpus and retrieval health
+# what has been learned, and how much of it can be recalled
 python3 ~/recall/scripts/recall.py --stats
 ```
 
@@ -146,28 +155,28 @@ the script that reads it. `--host codex` switches the last two defaults to
 
 ## What it deliberately does not do
 
-- **No cloud, no telemetry, no account of its own.** The corpus is a local file.
+- **No cloud, no telemetry, no account of its own.** Your memory is a local file.
   Distillation still goes to your model provider — see above; that is the one
   place your session content leaves the machine, and it is the same place it went
   when you were typing.
 - **No embedding model.** BM25 over full text, pure stdlib. It has to run inside a hook,
   a cron job, and a fresh clone with nothing installed.
 - **No content ships.** This repo is the mechanism. The catalogs start empty and fill with
-  your own failures.
+  what your own work teaches it.
 
 ## Honest limitations
 
-- **Surfacing is not prevention.** Every measurement here proves the right entry appeared.
-  None proves it changed an outcome. In the source corpus 10% of entries recurred *anyway*
-  — written down, and repeated regardless. Treat the recurrence counter as the real
-  scoreboard, not the fire count.
+- **Recalling is not yet compounding.** Every measurement here proves the right lesson
+  appeared. None proves it changed the outcome. 10% of lessons in the source memory
+  recurred *anyway* — written down, and repeated regardless. That counter, not the
+  number of times something surfaced, is the honest scoreboard.
 - **Push cannot reach prose.** An entry whose triggers are conceptual rather than literal
   will never auto-inject. That is why `recall` exists and why the agent is told to run it.
 - **Distillation costs tokens.** The drain spawns a headless agent per session. It is
   bounded by a wall-clock budget and a per-session timeout, and it is idle-cheap, but it
   is not free.
-- **Quality depends on your sessions.** A corpus distilled from sloppy work is a corpus of
-  sloppy lessons.
+- **Quality depends on your sessions.** A memory built from sloppy work is a memory of
+  sloppy lessons. It compounds whatever you actually do.
 
 ## Why the comments are long
 
