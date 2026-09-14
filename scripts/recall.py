@@ -230,6 +230,8 @@ def main() -> int:
     ap.add_argument("--full", action="store_true", help="do not truncate bodies")
     ap.add_argument("--recurring", action="store_true", help="lessons that repeated anyway")
     ap.add_argument("--unreachable", action="store_true", help="entries auto-injection cannot see")
+    ap.add_argument("--stubs", action="store_true",
+                    help="entries with an id and no lesson — they count as covered and help nobody")
     ap.add_argument("--stats", action="store_true")
     a = ap.parse_args()
 
@@ -292,6 +294,18 @@ def main() -> int:
     elif a.unreachable:
         idx = indexed_keys()
         sel = [e for e in entries if e["key"] not in idx][:a.limit]
+    elif a.stubs:
+        # An id with no body AND no fix is indistinguishable from a covered
+        # lesson in every count, and cannot be acted on by anyone. The id still
+        # carries real signal, so this lists them to be FILLED, not deleted:
+        # removing 28 named lessons to improve a coverage number is the exact
+        # move this corpus exists to catch.
+        BODY = ("trigger", "summary", "what_failed", "context", "symptom",
+                "failure", "what", "decided")
+        FIX = ("fix_pattern", "fix", "affected_pattern", "why")
+        def _empty(e, keys):
+            return not any(str(e["raw"].get(k) or "").strip() for k in keys)
+        sel = [e for e in entries if _empty(e, BODY) and _empty(e, FIX)][:a.limit]
     elif a.query:
         ranked = bm25(entries, " ".join(a.query))[:a.limit]
         if a.json:
