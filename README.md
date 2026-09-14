@@ -2,8 +2,9 @@
 
 **Your agent is brilliant every day. Every day it starts from nothing.**
 
-It untangled that race condition on Tuesday. It worked out why the build only fails
-on CI. It learned which of your conventions are real and which are three years stale.
+It found the number you needed, buried four tabs deep in someone else's spreadsheet.
+It worked out which of three conflicting documents is the one still in force. It
+learned that you rewrite every opening paragraph, so it stopped writing them that way.
 
 Then the session ended, and all of it went away.
 
@@ -37,7 +38,7 @@ pushes them — point it at a private repo, or at no repo.
                                                  │
                      (scheduled, unattended)     ▼
                  a fresh agent reads the session and writes down
-                 what failed, why, and the fix ──► catalogs (YAML)
+                 what was learned, and what was decided ──► your memory
                  (what it writes is decided by skills/compound)
                                                      │
                         ┌────────────────────────────┴───────────────┐
@@ -50,17 +51,19 @@ Two halves, and **you need both**. This is the part most such systems get wrong.
 
 **Push** is automatic and must be precise. It fires without being asked, so a false
 positive costs more than a miss — a channel that cries wolf gets ignored, and then the one
-hit that mattered is invisible too. So push only matches distinctive, code-shaped literals:
-`allow-same-origin`, `table=True`, `dark:bg-gray-800`.
+hit that mattered is invisible too. So push only fires on something distinctive and
+unmistakable — a client name, a file path, a policy number, an error message. Never on
+an ordinary word that happens to appear.
 
-**Pull** is on demand and must be complete. Precision can be looser because a person asked.
-It does BM25 over the full text of every entry, including the ones push can never reach.
+**Pull** is what happens when someone asks. It can afford to be looser, because a person
+is already looking. It searches the full text of everything, including the lessons push
+can never reach.
 
-Without pull, every lesson that is *conceptual* rather than a literal string gets written
-down perfectly and never surfaces again. In the corpus this was extracted from, that was
-**43% of everything captured** — 592 of 1375 entries — and nobody noticed for months,
-because a retrieval system that finds nothing looks exactly like a codebase with no
-matching lessons.
+Without pull, every lesson that is a *judgement* rather than a phrase — how this client
+likes to be handled, why that approach was abandoned — gets written down perfectly and
+never surfaces again. In the corpus this came from that was **43% of everything
+captured**, and nobody noticed for months. A memory that finds nothing looks exactly
+like a week where nothing was learned.
 
 ## Install
 
@@ -104,10 +107,10 @@ and that is the skill. So the tool is called by path:
 
 ```bash
 # ask the corpus — plain language, no query syntax
-python3 ~/recall/scripts/recall.py "test passes on CI but fails locally"
+python3 ~/recall/scripts/recall.py "how do we handle a renewal that slipped"
 
 # one entry in full, with the triggers that make it fire
-python3 ~/recall/scripts/recall.py --id test-runner-inherits-ambient-timezone
+python3 ~/recall/scripts/recall.py --id the-q3-figures-live-in-the-finance-sheet
 
 # what has repeated ANYWAY, despite being written down
 python3 ~/recall/scripts/recall.py --recurring
