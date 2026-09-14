@@ -204,11 +204,18 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None, ful
     print(f"\n{head}\n{tag}" + (f"  score {score:.1f}  matched: {', '.join(hits[:6])}" if score is not None else ""))
     # "decided"/"why" are the DECISIONS shape; without them a decision entry
     # retrieves correctly and then prints an empty body, which reads as a bug.
+    # "pattern"/"consequence" are an older entry schema still in the corpus.
+    # 28 entries carried real content under them and rendered BLANK -- searchable,
+    # because BM25 indexes every string, and unreadable, because display did not
+    # know the names. A reader that does not know a field treats it as absent.
     body = (r.get("what") or r.get("failure") or r.get("summary") or r.get("symptom")
-            or r.get("trigger") or r.get("decided") or "")
+            or r.get("trigger") or r.get("decided") or r.get("pattern")
+            or r.get("consequence") or "")
     body = " ".join(str(body).split())
     print("  " + (body if full else body[:400] + ("…" if len(body) > 400 else "")))
-    fix = r.get("fix_pattern") or r.get("fix") or r.get("why") or ""
+    fix = (r.get("fix_pattern") or r.get("fix") or r.get("why") or r.get("remedy")
+           or r.get("rule") or r.get("lesson") or r.get("doctrine")
+           or r.get("workaround") or "")
     if fix:
         fix = " ".join(str(fix).split())
         # A decision has a reason, not a fix. Printing "FIX:" over a rationale

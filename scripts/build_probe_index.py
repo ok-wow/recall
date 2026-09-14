@@ -126,7 +126,8 @@ def usable(token: str) -> bool:
 
 
 def summarize(entry: dict) -> str:
-    for field in ("summary", "trigger", "what_failed", "context", "decided"):
+    for field in ("summary", "trigger", "what_failed", "context", "decided",
+                  "pattern", "consequence"):
         v = entry.get(field)
         if isinstance(v, str) and v.strip():
             return " ".join(v.split())[:400]
@@ -134,7 +135,8 @@ def summarize(entry: dict) -> str:
 
 
 def remedy(entry: dict) -> str:
-    for field in ("fix_pattern", "fix", "affected_pattern", "why"):
+    for field in ("fix_pattern", "fix", "affected_pattern", "why", "remedy",
+                  "rule", "lesson", "doctrine", "workaround"):
         v = entry.get(field)
         if isinstance(v, str) and v.strip():
             return " ".join(v.split())[:400]

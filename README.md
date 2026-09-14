@@ -1,16 +1,5 @@
 # okWOW • Recall
 
-**Your agent is brilliant every day. Every day it starts from nothing.**
-
-It worked out why the deploy only fails on Fridays. It found the decision from six
-weeks ago that everyone had forgotten making. It learned that you rejected that
-pricing frame, and why — so it stopped proposing it.
-
-Then the session ended, and all of it went away.
-
-So next week you pay for it again: the same investigation, the same argument you
-already settled, the same hour you have watched go by before.
-
 ## Learn. Recall. Compound.
 
 **Learn.** When a session ends, Recall works out what it actually taught — not what
@@ -41,22 +30,27 @@ pushes it — point it at a private repo, or at no repo.
 
 ## The shape of it
 
-```
-  session ends ──► is there real work here? ──► queue
-                                                 │
-                     (scheduled, unattended)     ▼
-                 a fresh agent reads the session and writes down
-                 what was learned, and what was decided ──► your memory
-                 (what it writes is decided by skills/compound)
-                                                     │
-                        ┌────────────────────────────┴───────────────┐
-                        ▼                                            ▼
-                  PUSH: matched against your prompts           PULL: you ask
-                  and injected automatically                   `recall "question"`
+```mermaid
+flowchart TB
+    S["your session ends"] --> G{"real work<br/>in here?"}
+    G -->|no| X["dropped, with the reason recorded"]
+    G -->|yes| Q["queue"]
+    Q --> D["a fresh agent reads the whole session<br/>scheduled, unattended"]
+    D --> M[("your memory<br/>what was learned · what was decided")]
+    M --> P["PUSH<br/>matched against what you type<br/>arrives before you ask"]
+    M --> L["PULL<br/>you ask<br/>recall question"]
+    P --> N["your next session"]
+    L --> N
+    N -.->|and it ends too| S
+
+    style M fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style N fill:#238636,stroke:#238636,color:#fff
 ```
 
-Recalling has two halves, and **you need both**. This is the part most such systems
-get wrong.
+The dotted line is the whole point. Every session feeds the next one, so the
+memory is deeper on Friday than it was on Monday without anyone maintaining it.
+
+Recalling has two halves, and **you need both**. Most memory tools ship one.
 
 **Push** is automatic and must be precise. It fires without being asked, so a false
 positive costs more than a miss — a channel that cries wolf gets ignored, and then the one
@@ -73,6 +67,26 @@ likes to be handled, why that approach was abandoned — gets written down perfe
 never surfaces again. In the memory this came from that was **43% of everything
 captured**, and nobody noticed for months. A memory that finds nothing looks exactly
 like a week where nothing was learned.
+
+## What it captures
+
+Three kinds of thing, kept apart because they get recalled at different moments.
+
+| | what lands here |
+|---|---|
+| **Failure modes** | Something broke and you found out why. The misleading error and its true cause. The config that only bites under load. The version that silently changed behaviour. |
+| **Process failures** | Nothing was broken — the *approach* was wrong. Verified against the wrong case and called it done. Trusted a stale checkout. Shipped a claim nothing tested. |
+| **Decisions** | What was chosen, what it was chosen **instead of**, and why. Reversals count double: "we did X, now we do Y, because Z" encodes the lesson twice. |
+
+An entry is only worth keeping if it clears four bars: it helps a session that
+is not this one, it took discovery rather than a glance at the docs, it names an
+exact trigger and an exact fix, and the fix actually ran. Most sessions produce
+nothing that clears all four, and that is the expected result.
+
+What it will not keep: anything inferred from a single instance with no evidence,
+a restatement of what the code already says, a decision with no rejected
+alternative, and secrets of any kind — it records the path to a credential, never
+the value.
 
 ## Install
 
