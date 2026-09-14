@@ -37,7 +37,8 @@ HOME = Path(
     os.environ.get("RECALL_HOME") or str(Path.home() / ".recall")
 ).expanduser()
 
-INDEX_PATH = HOME / "probe-index.json"
+INDEX_PATH = Path(os.environ.get("RECALL_PROBE_INDEX")
+                  or HOME / "probe-index.json").expanduser()
 # Per-session dedupe state. Overridable for the same reason SURFACED_LOG is: the
 # suite drives this hook as a subprocess, and writing fixture state into the live
 # store both pollutes it and lets a test perturb a real session's dedupe.

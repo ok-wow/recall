@@ -38,7 +38,8 @@ from pathlib import Path
 RECALL_HOME = Path(os.environ.get("RECALL_HOME") or Path.home() / ".recall")
 CATALOG_DIR = Path(os.environ.get("RECALL_CATALOG_DIR") or RECALL_HOME / "catalogs")
 CATALOGS = {"FM": "FAILURE_MODES.yaml", "PF": "PROCESS_FAILURES.yaml"}
-PROBE_INDEX = RECALL_HOME / "probe-index.json"
+PROBE_INDEX = Path(os.environ.get("RECALL_PROBE_INDEX")
+                   or RECALL_HOME / "probe-index.json").expanduser()
 
 WORD = re.compile(r"[a-z0-9][a-z0-9._/-]*", re.I)
 # Ordinary English that carries no retrieval signal. Deliberately short: BM25's

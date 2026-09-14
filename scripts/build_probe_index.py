@@ -34,7 +34,10 @@ CATALOGS = {
     "FM": CATALOG_DIR / "FAILURE_MODES.yaml",
     "PF": CATALOG_DIR / "PROCESS_FAILURES.yaml",
 }
-INDEX_PATH = RECALL_HOME / "probe-index.json"
+# Honour the override the suite has been setting all along. Until 2026-09-14
+# nothing read RECALL_PROBE_INDEX, so test_recall believed it had redirected the
+# index and was in fact reading the user's real one.
+INDEX_PATH = env_path("RECALL_PROBE_INDEX", RECALL_HOME / "probe-index.json")
 
 BACKTICK = re.compile(r"`([^`]+)`")
 

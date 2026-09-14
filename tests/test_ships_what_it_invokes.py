@@ -97,6 +97,28 @@ check("install.sh installs the skill",
 check("drain exports the skill dir the SKILL.md tells the agent to use",
       "RECALL_SKILL_DIR=" in drain)
 
+# An env var a test SETS but no shipped code READS is isolation theatre: the
+# suite believes it redirected something and is quietly using the real thing.
+# test_recall set RECALL_PROBE_INDEX for months while all three readers
+# hardcoded RECALL_HOME/probe-index.json.
+# Key position only: `"RECALL_X": v` is a var handed to the SUT's environment.
+# `os.environ.get("RECALL_X")` is the test configuring ITSELF, which is fine.
+ENV_RE = re.compile(r'"(RECALL_[A-Z_]+)"\s*:')
+set_by_tests: set[str] = set()
+_self = Path(__file__).name
+for t in (ROOT / "tests").glob("test_*.py"):
+    if t.name == _self:
+        continue          # this file's own comments and controls are not fixtures
+    set_by_tests |= set(ENV_RE.findall(t.read_text()))
+read_by_code = set()
+for src in shipped_sources():
+    try:
+        read_by_code |= set(re.findall(r"RECALL_[A-Z_]+", src.read_text()))
+    except UnicodeDecodeError:
+        pass
+for var in sorted(set_by_tests - read_by_code):
+    check(f"tests set {var} but no shipped code reads it — that isolation is imaginary", False)
+
 # -- negative controls: a check that cannot fail proves nothing --------------
 check("scanner detects a missing skill",
       missing_skills('-p "/nosuchskill abc"', skill_exists) == {"nosuchskill"})
