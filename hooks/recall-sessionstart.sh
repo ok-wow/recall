@@ -208,6 +208,68 @@ EOF
 fi
 # --- end digest reaper liveness ---------------------------------------------
 
+# --- compaction witness (2026-09-14) ----------------------------------------
+# ABOVE the empty-queue exits on purpose. An empty queue is the common case and
+# says nothing about whether the last session lost its context without writing
+# anything down. Housekeeping placed below an early exit never runs in the
+# steady state.
+#
+# Reports the number nothing else counts: how often a context window collapsed
+# with no entry to show for it. recall-compaction-witness.py records the memory
+# size at each compaction; this compares the earliest record for that session
+# against the size now, and speaks only when it did not grow.
+#
+# Claude Code only. Codex has no PreCompact event, so the log stays empty there
+# and this block is silently inert -- which is the correct behaviour, not a gap
+# to paper over.
+COMPACTION_LOG="${RECALL_COMPACTION_LOG:-$RECALL_HOME/compaction-log.jsonl}"
+if [ -r "$COMPACTION_LOG" ]; then
+  CW=$(RECALL_CATALOG_DIR="$RECALL_CATALOG_DIR" python3 - "$COMPACTION_LOG" <<'PYEOF' 2>/dev/null || true
+import json, os, sys, pathlib, collections
+try:
+    rows = []
+    for line in open(sys.argv[1], encoding="utf-8"):
+        line = line.strip()
+        if line:
+            try: rows.append(json.loads(line))
+            except Exception: pass
+    if not rows: raise SystemExit(0)
+    by = collections.OrderedDict()
+    for r in rows:
+        by.setdefault(r.get("session_id", "unknown"), []).append(r)
+    sid, recs = list(by.items())[-1]
+    def total(e): return sum(v for v in (e or {}).values() if isinstance(v, int))
+    then = total(recs[0].get("entries"))
+    D = pathlib.Path(os.environ.get("RECALL_CATALOG_DIR") or
+                     pathlib.Path.home() / ".recall/catalogs")
+    now = 0
+    for n in ("FAILURE_MODES", "PROCESS_FAILURES", "DECISIONS"):
+        try:
+            with open(D / f"{n}.yaml", "rb") as fh:
+                now += sum(1 for ln in fh if ln.startswith(b"- "))
+        except OSError: pass
+    if not then or not now: raise SystemExit(0)
+    if now - then <= 0:
+        print(f"{len(recs)}|{sid[:8]}")
+except SystemExit: raise
+except Exception: pass
+PYEOF
+)
+  if [ -n "$CW" ]; then
+    CW_N=$(printf '%s' "$CW" | cut -d'|' -f1)
+    CW_S=$(printf '%s' "$CW" | cut -d'|' -f2)
+    cat <<EOF
+<system-reminder>
+recall: the last session to compact (${CW_S}) collapsed its context ${CW_N}
+time(s) and your memory has not grown since. Compaction is the backstop, not
+the capture -- if that session held anything worth keeping, it is now a summary
+of itself.
+</system-reminder>
+EOF
+  fi
+fi
+# --- end compaction witness -------------------------------------------------
+
 # --- dated due-checks (2026-09-13) ------------------------------------------
 # Handoffs accumulate follow-ups with dates ("re-audit in a few weeks", "compare
 # X against Y on the 11th") and nothing ever fires them -- they depend on someone

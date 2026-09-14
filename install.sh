@@ -117,11 +117,12 @@ say "  hook config  $SETTINGS"
 say ""
 say "  1. create $RECALL_HOME/{pending,processed,quarantine,digests,probe-state}"
 say "  2. seed empty catalogs if none exist (never overwrites)"
-say "  3. register 4 hooks in $SETTINGS:"
+say "  3. register the hooks in $SETTINGS:"
 say "       SessionEnd        capture a finished session"
 say "       SessionStart      report queue + retrieval health"
 say "       UserPromptSubmit  match your prompt against the corpus"
 say "       PostToolUse       match file edits against the corpus"
+[ "$HOST" = claude ] && say "       PreCompact        note when a context window collapses"
 say "  4. install the /compound skill into $SKILL_DEST"
 say "  5. schedule the drain every 15 minutes"
 say ""
@@ -157,9 +158,9 @@ else
 fi
 
 cp "$SETTINGS" "$SETTINGS.recall-backup-$STAMP"
-python3 - "$SETTINGS" "$REPO_DIR" <<'PY'
+python3 - "$SETTINGS" "$REPO_DIR" "$HOST" <<'PY'
 import json, sys
-settings, repo = sys.argv[1], sys.argv[2]
+settings, repo, host = sys.argv[1], sys.argv[2], sys.argv[3]
 d = json.load(open(settings))
 hooks = d.setdefault("hooks", {})
 WIRING = [
@@ -168,6 +169,12 @@ WIRING = [
     ("UserPromptSubmit", f"{repo}/hooks/recall-probe-inject.sh"),
     ("PostToolUse",      f"{repo}/hooks/recall-probe-inject.sh"),
 ]
+# Claude Code only. Codex's event list has no PreCompact, and registering an
+# event a host never fires would look wired and do nothing -- the shape of bug
+# this project exists to catch. On Codex the witness is simply absent and its
+# SessionStart reader stays inert, which is honest.
+if host == "claude":
+    WIRING.append(("PreCompact", f"{repo}/hooks/recall-compaction-witness.py"))
 added = 0
 for event, cmd in WIRING:
     entries = hooks.setdefault(event, [])

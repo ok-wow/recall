@@ -43,7 +43,7 @@ flowchart TB
 
     subgraph BACK["backstops, when the live path is missed"]
         direction LR
-        P["context filling up<br/>sweep before it collapses"]
+        P["context collapses<br/>noted, with what it cost"]
         E["session ends<br/>queued"]
     end
 
@@ -62,10 +62,18 @@ flowchart TB
 ```
 
 **Capture is live, not a batch job at the end.** Every turn is a chance to write
-something down and a chance to get something back. The two backstops exist
-because the live path gets missed — a session that ends without capturing
-anything is queued for an unattended pass, and a session about to lose its
-context gets swept first.
+something down and a chance to get something back. The backstops exist because
+the live path gets missed: a session that ends without capturing anything is
+queued for an unattended pass.
+
+The second backstop only watches, and deliberately. When a context window
+collapses, Recall records how big your memory was at that moment and tells you
+at the next session start if it never grew — the window closed and nothing was
+written down. It cannot intervene: a hook is a shell command, there is no agent
+mid-thought to instruct, and blocking a compaction on a full context strands the
+session with no way forward. So it counts instead, because nothing else counts
+this, and you cannot tell whether a backstop is load-bearing until you know how
+often it was bypassed. (Claude Code only — Codex has no such event.)
 
 That matters more than it sounds. A lesson captured at the moment it is learned
 carries what it actually cost. The same lesson reconstructed from a transcript

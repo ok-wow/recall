@@ -22,6 +22,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 EVENTS = {"SessionEnd", "SessionStart", "UserPromptSubmit", "PostToolUse"}
+# PreCompact exists in Claude Code and not in Codex, whose event list is
+# PreToolUse/SessionStart/UserPromptSubmit/Stop/SessionEnd/PostToolUse. Wiring
+# an event a host never fires would look installed and do nothing.
+HOST_ONLY = {"claude": {"PreCompact"}, "codex": set()}
 
 fails: list[str] = []
 
@@ -59,7 +63,14 @@ def hosts_case(host: str, config_rel: str, seed: str) -> None:
 
         d = json.loads(cfg.read_text())
         got = set(d.get("hooks", {}))
-        check(f"[{host}] all four events registered in {config_rel}", got == EVENTS, str(sorted(got)))
+        want = EVENTS | HOST_ONLY[host]
+        check(f"[{host}] events registered in {config_rel}", got == want, str(sorted(got)))
+        # The guard that matters: Codex must NOT be wired for an event it has no
+        # concept of, and Claude MUST be wired for the one only it can fire.
+        for other, only in HOST_ONLY.items():
+            if other != host:
+                for ev in only:
+                    check(f"[{host}] does not register {ev}", ev not in got)
         cmds = [h["command"] for v in d.get("hooks", {}).values()
                 for e in v for h in e.get("hooks", [])]
         check(f"[{host}] commands point into the repo", all(str(REPO) in c for c in cmds))
@@ -94,7 +105,7 @@ try:
 finally:
     shutil.rmtree(_h, ignore_errors=True)
 
-TOTAL = 10 * 2 + 2
+TOTAL = 11 * 2 + 2
 if fails:
     print(f"FAIL {len(fails)} check(s):")
     for f in fails:
