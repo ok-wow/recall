@@ -5,7 +5,15 @@ week it hits the same wall and works it out again from scratch. **okWOW • Reca
 turns finished sessions into a searchable corpus of failure modes, and puts the relevant
 ones back in front of the agent while it works.
 
-It runs entirely on your machine. Nothing is sent anywhere.
+The corpus is a file on your disk. This tool never uploads it, and there is no
+account, no telemetry and no server.
+
+It is not, however, airtight, and the honest version matters: **distillation is a
+model call.** The drain hands a finished transcript — or a digest of one — to
+whichever agent CLI you configured, which sends it to that provider exactly as an
+interactive session would. And if your catalog directory is a git checkout, the
+worker commits and pushes it, because otherwise months of captured work sits
+uncommitted. Point it at a private repo, or at no repo.
 
 ## The shape of it
 
@@ -92,7 +100,10 @@ Every path resolves through an environment variable with a default. No absolute 
 
 ## What it deliberately does not do
 
-- **No cloud, no telemetry, no account.** The corpus is your sessions. It stays local.
+- **No cloud, no telemetry, no account of its own.** The corpus is a local file.
+  Distillation still goes to your model provider — see above; that is the one
+  place your session content leaves the machine, and it is the same place it went
+  when you were typing.
 - **No embedding model.** BM25 over full text, pure stdlib. It has to run inside a hook,
   a cron job, and a fresh clone with nothing installed.
 - **No content ships.** This repo is the mechanism. The catalogs start empty and fill with

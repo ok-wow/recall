@@ -73,10 +73,35 @@ DRAIN_VERSION="3"
 # than saying so. `setup-token` issues a long-lived token that does not
 # depend on a refreshable session; keep it here at 0600 and load it per run.
 CREDS="${RECALL_DRAIN_CREDENTIALS:-$RECALL_HOME/drain-credentials}"
-if [ -r "$CREDS" ]; then
-  set -a
-  . "$CREDS"
-  set +a
+# This file used to be `.`-sourced, which runs arbitrary shell as you every 15
+# minutes from launchd -- and a line in it could reassign $PERMISSIONS and point
+# the worker at a decoy deny list, defeating the guard below. It now yields only
+# KEY=VALUE, and only from a file that is yours and mode 0600, because a token
+# readable by other local users is not a secret.
+if [ -e "$CREDS" ]; then
+  _cmode=$(stat -f '%Lp' "$CREDS" 2>/dev/null || stat -c '%a' "$CREDS" 2>/dev/null || echo "")
+  _cown=$(stat -f '%u' "$CREDS" 2>/dev/null || stat -c '%u' "$CREDS" 2>/dev/null || echo "")
+  if [ "$_cown" != "$(id -u)" ]; then
+    log "abort: $CREDS is not owned by $(id -un) — refusing to read it"
+    exit 0
+  elif [ "$_cmode" != "600" ]; then
+    log "abort: $CREDS is mode ${_cmode:-unknown}, expected 600 — run: chmod 600 '$CREDS'"
+    exit 0
+  else
+    # Only NAME=VALUE lines, one variable per line, nothing executed.
+    while IFS= read -r _line || [ -n "$_line" ]; do
+      case "$_line" in
+        ''|\#*) continue ;;
+        [A-Za-z_]*=*)
+          _k=${_line%%=*}
+          case "$_k" in *[!A-Za-z0-9_]*) continue ;; esac
+          _v=${_line#*=}
+          _v=${_v%\"}; _v=${_v#\"}; _v=${_v%\'}; _v=${_v#\'}
+          export "$_k=$_v"
+          ;;
+      esac
+    done < "$CREDS"
+  fi
 fi
 AUTH_DOWN_MARKER="$RECALL_HOME/auth-down.json"
 # The per-session "this was processed" record. Its absence is the root cause
@@ -110,6 +135,14 @@ LEDGER
 # inline, because inlining it produced '^('a|b')' — a shell pipeline that
 # passes `bash -n` and greps for nothing.
 INFRA_RE='^(Failed to authenticate|OAuth session expired|Invalid API key|Not logged in|Credit balance|You.re out of usage credits|Usage limit reached)'
+# Exit 0 does NOT mean the work happened. `claude -p "/compound <id>"` prints
+# "Unknown command: /compound" and exits 0 when the skill is not registered for
+# that invocation -- a dangling symlink, a clone that moved, or the crontab path
+# that forgets RECALL_AGENT_BIN. The drain used to read that 0 as success, write
+# the ledger, delete the marker, and SessionEnd then refused to re-queue the
+# session: destroyed, permanently, one per tick, while the queue looked healthy.
+# The refuting evidence was already in the run log it saved and nobody read it.
+WORKER_BROKEN_RE='^(Unknown command|Unknown slash command|Invalid command)'
 
 # A transcript no context window can hold is not a retry candidate. Without
 # this gate the giants (95 KB .. 149 MB in the Sep-12 queue) each burn three
@@ -364,16 +397,25 @@ while :; do
     # session it had just distilled successfully. So (1) only look when the run
     # made no progress, and (2) anchor to line start — the CLI prints these as
     # bare lines, prose mentions them mid-sentence and in backticks.
-    if grep -qiE "$INFRA_RE" "$RUNLOG"; then
-      REASON=$(grep -iEm1 "$INFRA_RE" "$RUNLOG")
+    # The worker exited 0 without the command existing. Retrying cannot help
+    # until the skill is installed, and burning attempts would quarantine
+    # perfectly good sessions, so halt the run and leave every marker untouched.
+    if [ "$CHILD_RC" -eq 0 ] && grep -qE "$WORKER_BROKEN_RE" "$RUNLOG"; then
+      REASON=$(grep -Em1 "$WORKER_BROKEN_RE" "$RUNLOG")
+      log "worker-broken: $REASON — the /compound skill is not reachable by $AGENT_PATH."
+      log "  $SESSION left queued, no attempt consumed. Re-run install.sh, or check that"
+      log "  the skill symlink still resolves and that RECALL_AGENT_BIN names the right CLI."
       rm -f "$RUNLOG"
-      printf '{"reason":%s,"detected_at":"%s","pending":%s}\n' \
-        "$(printf '%s' "$REASON" | jq -Rs .)" \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "$(count_pending)" > "$AUTH_DOWN_MARKER"
-      log "infra-down: $REASON — halting run, $SESSION left queued, no attempt consumed"
       break
     fi
+    # ORDER. The exit-code verdict is read BEFORE the outage scan. It used to be
+    # the other way round, and since v3 moved marker-clearing into the drain,
+    # "the run made no progress" became true of every SUCCESSFUL run too -- so
+    # the only remaining guard was the ^ anchor. A worker that distilled a
+    # session ABOUT auth or quota, and quoted one of those phrases at line
+    # start, halted the queue, left its marker untouched (same mtime, so `ls
+    # -tr` handed back the same one next tick) and consumed no attempt. The
+    # queue wedged permanently behind it while SessionStart reported an outage.
     # The worker ran to completion and simply did not delete the marker. That is
     # the overwhelmingly common case and it is NOT a failure: a session can be
     # fully analysed and correctly yield nothing worth capturing ("0 new
@@ -396,6 +438,17 @@ while :; do
       # Ledger write failed: keep the marker. Losing the session is worse than
       # processing it twice.
       log "warn: could not write processed record for $SESSION — marker left queued"
+
+    if grep -qiE "$INFRA_RE" "$RUNLOG"; then
+      REASON=$(grep -iEm1 "$INFRA_RE" "$RUNLOG")
+      rm -f "$RUNLOG"
+      printf '{"reason":%s,"detected_at":"%s","pending":%s}\n' \
+        "$(printf '%s' "$REASON" | jq -Rs .)" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "$(count_pending)" > "$AUTH_DOWN_MARKER"
+      log "infra-down: $REASON — halting run, $SESSION left queued, no attempt consumed"
+      break
+    fi
     fi
     rm -f "$RUNLOG"
     # The marker survived a real failure (killed, or non-zero exit). The loop
