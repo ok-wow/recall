@@ -34,7 +34,7 @@ from pathlib import Path
 # Every path below resolves through an environment variable with a default.
 # Nothing is written as an absolute path.
 HOME = Path(
-    os.environ.get("COMPOUND_HOME") or str(Path.home() / ".compound")
+    os.environ.get("RECALL_HOME") or str(Path.home() / ".recall")
 ).expanduser()
 
 INDEX_PATH = HOME / "probe-index.json"
@@ -42,7 +42,7 @@ INDEX_PATH = HOME / "probe-index.json"
 # suite drives this hook as a subprocess, and writing fixture state into the live
 # store both pollutes it and lets a test perturb a real session's dedupe.
 STATE_DIR = Path(
-    os.environ.get("COMPOUND_PROBE_STATE_DIR") or str(HOME / "probe-state")
+    os.environ.get("RECALL_PROBE_STATE_DIR") or str(HOME / "probe-state")
 ).expanduser()
 # The signal log is the ONLY evidence of whether retrieval works, so a test run
 # must never write to it. test_probe_inject.py drives this hook as a subprocess
@@ -50,7 +50,7 @@ STATE_DIR = Path(
 # -- 170 of 378 rows, 45% of the corpus of evidence, moving every time the suite
 # ran. Overridable so the harness can point somewhere disposable.
 SURFACED_LOG = Path(
-    os.environ.get("COMPOUND_PROBE_SURFACED_LOG") or str(HOME / "surfaced.jsonl")
+    os.environ.get("RECALL_PROBE_SURFACED_LOG") or str(HOME / "surfaced.jsonl")
 ).expanduser()
 
 MAX_ENTRIES = 2
@@ -80,7 +80,7 @@ def lone_token_qualifies(token: str) -> bool:
         return True
     return any(c.isdigit() for c in token)
 
-# The catalog describes the compound loop itself, so writing ABOUT the loop
+# The catalog describes the Recall loop itself, so writing ABOUT the loop
 # matches entries about the loop. `probe_when` alone produced 22 of the first
 # 227 fires -- the single largest source, every one of them self-referential
 # noise. A hit carried only by this vocabulary is not evidence of anything.
@@ -243,9 +243,9 @@ def visible_notice(index: dict, rows: list[tuple[str, float, list[str]]]) -> str
 
     Injection is machine-facing by design, which means every hit has so far been
     invisible: the loop could be working perfectly and still feel like it does
-    nothing. This is the counterpart to the capture notices in
-    compound-live-signal.py -- capture says "worth writing down", this says
-    "we already wrote it down." Strong hits only; a noisy receipt is worse than
+    nothing. Capture says "this is worth writing down"; this notice is the
+    other half -- "we already wrote it down." Strong hits only; a noisy
+    receipt is worse than
     a silent one, because it teaches the reader to ignore it.
     """
     specific_tokens = set(index.get("specific_tokens") or [])

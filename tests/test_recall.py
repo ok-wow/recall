@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Fixtures for recall.py — the pull half of the compound loop.
+"""Fixtures for recall.py — the pull half of the Recall loop.
 
-Runs against a synthetic catalog in a temp dir (COMPOUND_CATALOG_DIR), never the
+Runs against a synthetic catalog in a temp dir (RECALL_CATALOG_DIR), never the
 real one, so the suite cannot be perturbed by what the drain wrote overnight and
 cannot perturb it back.
 
@@ -22,7 +22,7 @@ from pathlib import Path
 
 # Sibling scripts resolve through the same env var the rest of the system uses;
 # the default is the repo's scripts/ dir, found relative to this file.
-SCRIPT_DIR = Path(os.environ.get("COMPOUND_SKILL_DIR")
+SCRIPT_DIR = Path(os.environ.get("RECALL_SKILL_DIR")
                   or Path(__file__).resolve().parent.parent / "scripts")
 RECALL = SCRIPT_DIR / "recall.py"
 
@@ -72,8 +72,8 @@ def catalog_dir() -> Path:
 
 
 def run(d: Path, *args: str, probe_index: str | None = None) -> tuple[int, str]:
-    env = {**os.environ, "COMPOUND_CATALOG_DIR": str(d),
-           "COMPOUND_PROBE_INDEX": probe_index or str(d / "nonexistent-index.json")}
+    env = {**os.environ, "RECALL_CATALOG_DIR": str(d),
+           "RECALL_PROBE_INDEX": probe_index or str(d / "nonexistent-index.json")}
     p = subprocess.run([sys.executable, str(RECALL), *args],
                        capture_output=True, text=True, env=env)
     return p.returncode, p.stdout + p.stderr

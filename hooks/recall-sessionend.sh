@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# compound SessionEnd hook (v0.2.0).
+# Recall SessionEnd hook (v0.2.0).
 # Writes a pending-marker IF (a) the transcript holds real work AND (b) no /compound
 # was invoked this session. The next session's SessionStart hook surfaces
 # any pending markers as a system-reminder so the user can run
@@ -7,13 +7,13 @@
 #
 # Input: stdin JSON from the host agent's hook system, containing at least
 #   { session_id, transcript_path }
-# Output: writes $COMPOUND_HOME/pending/<session-id>.json
+# Output: writes $RECALL_HOME/pending/<session-id>.json
 #         (silent if conditions not met)
 
 set -euo pipefail
 
-COMPOUND_HOME="${COMPOUND_HOME:-$HOME/.compound}"
-COMPOUND_CATALOG_DIR="${COMPOUND_CATALOG_DIR:-$COMPOUND_HOME/catalogs}"
+RECALL_HOME="${RECALL_HOME:-$HOME/.recall}"
+RECALL_CATALOG_DIR="${RECALL_CATALOG_DIR:-$RECALL_HOME/catalogs}"
 
 # Resolve sibling scripts beside this file, so a second copy of the hook
 # installed under another agent's hook directory uses that copy's scripts
@@ -21,11 +21,11 @@ COMPOUND_CATALOG_DIR="${COMPOUND_CATALOG_DIR:-$COMPOUND_HOME/catalogs}"
 # `set -euo pipefail` is active. An unset BASH_SOURCE[0] is fatal under `set -u`,
 # and a failing cd makes the substitution non-zero, which `set -e` turns into an
 # immediate exit -- before the marker is ever written, so the session is dropped
-# from the queue silently. Guard both, exactly as compound-sessionstart.sh does.
+# from the queue silently. Guard both, exactly as recall-sessionstart.sh does.
 SCRIPT_DIR=$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P) || SCRIPT_DIR="."
-COMPOUND_SKILL_DIR="${COMPOUND_SKILL_DIR:-$SCRIPT_DIR/../scripts}"
+RECALL_SKILL_DIR="${RECALL_SKILL_DIR:-$SCRIPT_DIR/../scripts}"
 
-PENDING_DIR="$COMPOUND_HOME/pending"
+PENDING_DIR="$RECALL_HOME/pending"
 
 mkdir -p "$PENDING_DIR"
 
@@ -38,16 +38,16 @@ INPUT=$(cat)
 # session end regardless of how it was written; a break writes a marker the
 # SessionStart hook surfaces next session.
 SWEEP_FILES=(
-  "$COMPOUND_CATALOG_DIR/FAILURE_MODES.yaml"
-  "$COMPOUND_CATALOG_DIR/PROCESS_FAILURES.yaml"
-  "$COMPOUND_HOME/learnings.yaml"
-  "$COMPOUND_HOME/extracted_registry.yaml"
-  "$COMPOUND_HOME/artifacts_registry.yaml"
-  "$COMPOUND_HOME/orphans/learnings.yaml"
+  "$RECALL_CATALOG_DIR/FAILURE_MODES.yaml"
+  "$RECALL_CATALOG_DIR/PROCESS_FAILURES.yaml"
+  "$RECALL_HOME/learnings.yaml"
+  "$RECALL_HOME/extracted_registry.yaml"
+  "$RECALL_HOME/artifacts_registry.yaml"
+  "$RECALL_HOME/orphans/learnings.yaml"
 )
 SWEEP_EXISTING=()
 for f in "${SWEEP_FILES[@]}"; do [ -f "$f" ] && SWEEP_EXISTING+=("$f"); done
-BROKEN_MARKER="$COMPOUND_HOME/yaml-broken.json"
+BROKEN_MARKER="$RECALL_HOME/yaml-broken.json"
 if [ ${#SWEEP_EXISTING[@]} -gt 0 ]; then
   if SWEEP_BAD=$(python3 - "${SWEEP_EXISTING[@]}" <<'PY'
 import sys, yaml, json
@@ -67,13 +67,13 @@ PY
     rm -f "$BROKEN_MARKER"   # all six parse — clear any stale marker
   else
     printf '%s' "$SWEEP_BAD" > "$BROKEN_MARKER"
-    printf 'compound: SessionEnd safe_load sweep found broken knowledge YAML: %s\n' "$SWEEP_BAD" >&2
+    printf 'recall: SessionEnd safe_load sweep found broken knowledge YAML: %s\n' "$SWEEP_BAD" >&2
   fi
 fi
 # --- end safe_load sweep ----------------------------------------------------
 
 # --- catalog strand detection (v0.3.4, 2026-06-19) --------------------------
-# A compound run appends to the catalogs (often symlinked into a git working
+# A /compound run appends to the catalogs (often symlinked into a git working
 # tree) and is supposed to commit+push (the Stage-4 Tend step). If that step is
 # skipped/interrupted, or appends land while the catalog checkout sits on a
 # feature branch, catalog edits strand as uncommitted WIP — silently exposed to
@@ -82,9 +82,9 @@ fi
 # Detect uncommitted catalog changes at session end and write a marker the
 # SessionStart hook surfaces next session. Detection, not auto-mutation:
 # auto-switching the checkout could clobber an active feature session.
-CATALOG_REPO_DIR=$(dirname -- "$COMPOUND_CATALOG_DIR")
-CATALOG_PATHSPEC=$(basename -- "$COMPOUND_CATALOG_DIR")
-CATALOG_DIRTY_MARKER="$COMPOUND_HOME/catalog-dirty.json"
+CATALOG_REPO_DIR=$(dirname -- "$RECALL_CATALOG_DIR")
+CATALOG_PATHSPEC=$(basename -- "$RECALL_CATALOG_DIR")
+CATALOG_DIRTY_MARKER="$RECALL_HOME/catalog-dirty.json"
 if [ -e "$CATALOG_REPO_DIR/.git" ]; then
   DIRTY=$(git -C "$CATALOG_REPO_DIR" status --porcelain -- "$CATALOG_PATHSPEC/" 2>/dev/null || true)
   if [ -n "$DIRTY" ]; then
@@ -130,7 +130,7 @@ SIZE=$(stat -f%z "$TRANSCRIPT_PATH" 2>/dev/null || stat -c%s "$TRANSCRIPT_PATH" 
 #
 # Exit 1 from the classifier means "not substantive". Under `set -e` that would
 # kill this hook outright, so it is consumed by an `if`, never left bare.
-SUBSTANCE="$COMPOUND_SKILL_DIR/transcript_substance.py"
+SUBSTANCE="$RECALL_SKILL_DIR/transcript_substance.py"
 if [ -r "$SUBSTANCE" ]; then
     if command -v timeout >/dev/null 2>&1; then
         SUBSTANCE_RUN=(timeout 5 python3 "$SUBSTANCE" "$TRANSCRIPT_PATH")
@@ -167,7 +167,7 @@ fi
 # only to be discarded as already-present. PROCESS_FAILURES prescribed exactly
 # this record on 2026-06-04 and it was never built; it went unbuilt long enough
 # for the same gap to resurface from the opposite direction.
-PROCESSED_RECORD="$COMPOUND_HOME/processed/${SESSION_ID}.json"
+PROCESSED_RECORD="$RECALL_HOME/processed/${SESSION_ID}.json"
 if [ -f "$PROCESSED_RECORD" ]; then
     exit 0
 fi

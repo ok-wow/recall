@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# compound bounded drain (v3, 2026-09-13).
+# Recall bounded drain (v3, 2026-09-13).
 # v3 owns processed-marker records and digests oversized transcripts before work.
 #
 # Runs the four-stage distillation on a schedule so throughput stops depending
@@ -20,21 +20,21 @@
 #
 # Why scheduled rather than SessionEnd: a SessionEnd hook gets one second by
 # default and at most three (hooks.md), and a child spawned from it dies with
-# its parent's process group when the host reaps the timeout. Compound appends
+# its parent's process group when the host reaps the timeout. Recall appends
 # to shared YAML, so a run killed mid-write is exactly the corruption this
 # system must not have.
 #
-# Env: COMPOUND_DRAIN_BUDGET (total seconds, default 1800)
-#      COMPOUND_DRAIN_SESSION_TIMEOUT (per session, default 600)
-#      COMPOUND_AGENT_BIN (agent CLI, default `claude`)
+# Env: RECALL_DRAIN_BUDGET (total seconds, default 1800)
+#      RECALL_DRAIN_SESSION_TIMEOUT (per session, default 600)
+#      RECALL_AGENT_BIN (agent CLI, default `claude`)
 
 set -uo pipefail
 
-COMPOUND_HOME="${COMPOUND_HOME:-$HOME/.compound}"
-COMPOUND_CATALOG_DIR="${COMPOUND_CATALOG_DIR:-$COMPOUND_HOME/catalogs}"
+RECALL_HOME="${RECALL_HOME:-$HOME/.recall}"
+RECALL_CATALOG_DIR="${RECALL_CATALOG_DIR:-$RECALL_HOME/catalogs}"
 # The worker resolves the same state paths; export so an operator override here
 # is the one the child sees too, instead of each side falling back separately.
-export COMPOUND_HOME COMPOUND_CATALOG_DIR
+export RECALL_HOME RECALL_CATALOG_DIR
 
 # Resolve this script's own directory so a second copy of the hook installed
 # under another agent's hook directory uses that copy's siblings.
@@ -43,28 +43,28 @@ case "$0" in
   *) SCRIPT_PARENT=. ;;
 esac
 SCRIPT_DIR=$(CDPATH= cd -P "$SCRIPT_PARENT" 2>/dev/null && pwd -P) || SCRIPT_DIR="."
-SKILL_DIR="${COMPOUND_SKILL_DIR:-$SCRIPT_DIR/../scripts}"
+SKILL_DIR="${RECALL_SKILL_DIR:-$SCRIPT_DIR/../scripts}"
 
-PENDING_DIR="$COMPOUND_HOME/pending"
-LOCK_DIR="$COMPOUND_HOME/drain.lock"
-QUARANTINE_DIR="$COMPOUND_HOME/quarantine"
-ATTEMPTS_DIR="$COMPOUND_HOME/drain-attempts"
-LOG="$COMPOUND_HOME/drain.log"
+PENDING_DIR="$RECALL_HOME/pending"
+LOCK_DIR="$RECALL_HOME/drain.lock"
+QUARANTINE_DIR="$RECALL_HOME/quarantine"
+ATTEMPTS_DIR="$RECALL_HOME/drain-attempts"
+LOG="$RECALL_HOME/drain.log"
 # The default is a bare command name, so it is resolved on PATH below before the
 # executable check — `[ -x claude ]` would test a file in the current directory.
-AGENT_BIN="${COMPOUND_AGENT_BIN:-claude}"
+AGENT_BIN="${RECALL_AGENT_BIN:-claude}"
 # Deny rules for the unattended run only. Loaded per invocation so the operator's
 # interactive sessions keep their own posture: a global rule would silently
 # restrict work the operator is present for.
-PERMISSIONS="${COMPOUND_DRAIN_PERMISSIONS:-$SCRIPT_DIR/compound-drain-permissions.json}"
-BUDGET="${COMPOUND_DRAIN_BUDGET:-1800}"
-SESSION_TIMEOUT="${COMPOUND_DRAIN_SESSION_TIMEOUT:-600}"
+PERMISSIONS="${RECALL_DRAIN_PERMISSIONS:-$SCRIPT_DIR/recall-drain-permissions.json}"
+BUDGET="${RECALL_DRAIN_BUDGET:-1800}"
+SESSION_TIMEOUT="${RECALL_DRAIN_SESSION_TIMEOUT:-600}"
 # The worker does not inherit the operator's interactive model. The host's
 # settings pin an expensive long-context model for foreground work; the
 # unattended run picked that up and died on "out of usage credits" the moment
 # auth started working. Distillation is a read-and-summarize job, so pin the
 # cheaper model here and leave the operator's choice alone.
-MODEL="${COMPOUND_DRAIN_MODEL:-haiku}"
+MODEL="${RECALL_DRAIN_MODEL:-haiku}"
 DRAIN_VERSION="3"
 
 # Unattended auth. The interactive app and this CLI do not share a credential.
@@ -72,18 +72,18 @@ DRAIN_VERSION="3"
 # authenticate, and the retry path moved 60 sessions into quarantine rather
 # than saying so. `setup-token` issues a long-lived token that does not
 # depend on a refreshable session; keep it here at 0600 and load it per run.
-CREDS="${COMPOUND_DRAIN_CREDENTIALS:-$COMPOUND_HOME/drain-credentials}"
+CREDS="${RECALL_DRAIN_CREDENTIALS:-$RECALL_HOME/drain-credentials}"
 if [ -r "$CREDS" ]; then
   set -a
   . "$CREDS"
   set +a
 fi
-AUTH_DOWN_MARKER="$COMPOUND_HOME/auth-down.json"
+AUTH_DOWN_MARKER="$RECALL_HOME/auth-down.json"
 # The per-session "this was processed" record. Its absence is the root cause
 # behind two separate failures three months apart: in June, SessionEnd
 # re-enqueued sessions that had already been drained; today, finished sessions
 # stranded in the queue. Both are the same gap -- nothing durable said "done".
-PROCESSED_DIR="$COMPOUND_HOME/processed"
+PROCESSED_DIR="$RECALL_HOME/processed"
 
 # Record the verdict, then the marker can go. Deleting a marker with no record
 # is exactly what SKILL.md warns against ("silent auto-clear loses signal"), so
@@ -116,11 +116,11 @@ INFRA_RE='^(Failed to authenticate|OAuth session expired|Invalid API key|Not log
 # 600s timeouts before quarantining, and `ls -tr` puts them in front of work
 # that would have succeeded. Park them where the SessionStart report can still
 # see them -- a silent hole is the bug this whole exercise started from.
-OVERSIZE_BYTES="${COMPOUND_DRAIN_OVERSIZE_BYTES:-8388608}"   # 8 MB
+OVERSIZE_BYTES="${RECALL_DRAIN_OVERSIZE_BYTES:-8388608}"   # 8 MB
 OVERSIZED_DIR="$QUARANTINE_DIR/_oversized"
-DIGEST_DIR="$COMPOUND_HOME/digests"
+DIGEST_DIR="$RECALL_HOME/digests"
 DIGESTER="$SKILL_DIR/digest_transcript.py"
-DIGEST_RETENTION_DAYS="${COMPOUND_DIGEST_RETENTION_DAYS:-14}"
+DIGEST_RETENTION_DAYS="${RECALL_DIGEST_RETENTION_DAYS:-14}"
 
 # cron hands a job almost no environment, and the agent CLI reads its
 # credentials from the login Keychain, which it cannot find without USER: the
@@ -236,7 +236,7 @@ oldest_marker() {
 
 # The drain is itself an agent session. Without this guard its own session end
 # or a nested invocation would re-enter the drain.
-[ "${COMPOUND_WORKER:-}" = "1" ] && exit 0
+[ "${RECALL_WORKER:-}" = "1" ] && exit 0
 
 # Deliberately ABOVE the empty-queue exit below. Steady state is an empty queue,
 # so housekeeping placed after that guard would never run on the common path.
@@ -262,19 +262,19 @@ echo "$$" > "$LOCK_DIR/pid"
 trap 'rm -rf "$LOCK_DIR"' EXIT
 
 # Stage 4 commits the catalogs, so the worker starts where they live. The dir
-# is state under COMPOUND_HOME like pending/ and processed/, which this script
+# is state under RECALL_HOME like pending/ and processed/, which this script
 # already creates on demand — an operator override or a state dir that has not
 # been through install.sh must not cost the whole run. The abort still stands
 # for a path that cannot be made (unwritable, or a file in the way).
-mkdir -p "$COMPOUND_CATALOG_DIR" 2>/dev/null
-cd "$COMPOUND_CATALOG_DIR" || { log "abort: cannot cd $COMPOUND_CATALOG_DIR"; exit 0; }
+mkdir -p "$RECALL_CATALOG_DIR" 2>/dev/null
+cd "$RECALL_CATALOG_DIR" || { log "abort: cannot cd $RECALL_CATALOG_DIR"; exit 0; }
 log "start: v${DRAIN_VERSION}, $PENDING pending, budget ${BUDGET}s"
 
 STARTED=$(date +%s)
 DRAINED=0
 QUARANTINED=0
-MAX_QUARANTINE="${COMPOUND_DRAIN_MAX_QUARANTINE:-3}"
-MAX_ATTEMPTS="${COMPOUND_DRAIN_MAX_ATTEMPTS:-3}"
+MAX_QUARANTINE="${RECALL_DRAIN_MAX_QUARANTINE:-3}"
+MAX_ATTEMPTS="${RECALL_DRAIN_MAX_ATTEMPTS:-3}"
 while :; do
   REMAINING=$(count_pending)
   [ "$REMAINING" -eq 0 ] && { log "queue empty"; break; }
@@ -316,8 +316,8 @@ while :; do
   # bug, so the push is allowed and the irreversible verbs are denied instead —
   # force-push, delete, reset --hard, merge, publish. A blocked step fails safe:
   # the marker stays queued, and human PR/merge ratification is untouched.
-  RUNLOG=$(mktemp "${TMPDIR:-/tmp}/compound-drain.XXXXXX")
-  COMPOUND_WORKER=1 "$AGENT_PATH" \
+  RUNLOG=$(mktemp "${TMPDIR:-/tmp}/recall-drain.XXXXXX")
+  RECALL_WORKER=1 "$AGENT_PATH" \
     -p "/compound $SESSION" \
     --model "$MODEL" \
     --permission-mode auto \

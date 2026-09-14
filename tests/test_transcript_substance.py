@@ -12,8 +12,8 @@ every Codex session as 0 turns / 0 tools and would have silently dropped all of
 them.
 
 Paths resolve through the environment, never absolutely:
-    COMPOUND_SKILL_DIR    the scripts directory      (default: <repo>/scripts)
-    COMPOUND_FIXTURE_DIR  the fixtures directory     (default: <repo>/tests/fixtures)
+    RECALL_SKILL_DIR    the scripts directory      (default: <repo>/scripts)
+    RECALL_FIXTURE_DIR  the fixtures directory     (default: <repo>/tests/fixtures)
 """
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ from pathlib import Path
 TESTS_DIR = Path(__file__).resolve().parent
 REPO_DIR = TESTS_DIR.parent
 
-SKILL_DIR = Path(os.environ.get("COMPOUND_SKILL_DIR") or REPO_DIR / "scripts").expanduser()
-FIXTURE_DIR = Path(os.environ.get("COMPOUND_FIXTURE_DIR") or TESTS_DIR / "fixtures").expanduser()
+SKILL_DIR = Path(os.environ.get("RECALL_SKILL_DIR") or REPO_DIR / "scripts").expanduser()
+FIXTURE_DIR = Path(os.environ.get("RECALL_FIXTURE_DIR") or TESTS_DIR / "fixtures").expanduser()
 
 GATE = SKILL_DIR / "transcript_substance.py"
 CORPUS = FIXTURE_DIR / "no_substance_corpus"
@@ -93,7 +93,7 @@ def real_corpus() -> tuple[int, int, list[str]]:
     counts and exit codes before and after stripping. 1614 KB -> 52 KB, and no
     conversation content enters the repo.
 
-    Kept as fixtures rather than as pointers into $COMPOUND_HOST_DIR/projects
+    Kept as fixtures rather than as pointers into $RECALL_HOST_DIR/projects
     because transcripts age off that disk -- the sibling `_undrainable` tier is
     21 markers whose transcripts expired before anything read them. A corpus
     that lives only as a path is a corpus that will quietly become empty.
@@ -136,7 +136,7 @@ def main() -> int:
 
     # A missing or unreadable transcript must fail OPEN: losing real signal is
     # worse than one wasted drain run.
-    missing = Path(tempfile.gettempdir()) / "compound-nonexistent-transcript.jsonl"
+    missing = Path(tempfile.gettempdir()) / "recall-nonexistent-transcript.jsonl"
     if not substantive(missing):
         failures.append("missing transcript should fail open (queue it)")
 

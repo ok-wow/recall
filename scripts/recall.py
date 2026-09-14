@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""recall — ask the compound corpus a question.
+"""recall — ask the okWOW • Recall corpus a question.
 
 The loop had a capture half and a push half and no pull half. Injection only
 ever reached entries whose `probe_when` contained BACKTICKED, code-shaped
@@ -35,10 +35,10 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-COMPOUND_HOME = Path(os.environ.get("COMPOUND_HOME") or Path.home() / ".compound")
-CATALOG_DIR = Path(os.environ.get("COMPOUND_CATALOG_DIR") or COMPOUND_HOME / "catalogs")
+RECALL_HOME = Path(os.environ.get("RECALL_HOME") or Path.home() / ".recall")
+CATALOG_DIR = Path(os.environ.get("RECALL_CATALOG_DIR") or RECALL_HOME / "catalogs")
 CATALOGS = {"FM": "FAILURE_MODES.yaml", "PF": "PROCESS_FAILURES.yaml"}
-PROBE_INDEX = COMPOUND_HOME / "probe-index.json"
+PROBE_INDEX = RECALL_HOME / "probe-index.json"
 
 WORD = re.compile(r"[a-z0-9][a-z0-9._/-]*", re.I)
 # Ordinary English that carries no retrieval signal. Deliberately short: BM25's
@@ -205,7 +205,7 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None, ful
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(prog="recall", description="Query the compound corpus.")
+    ap = argparse.ArgumentParser(prog="recall", description="Query the okWOW • Recall corpus.")
     ap.add_argument("query", nargs="*", help="free-text question")
     ap.add_argument("--id", help="show one entry by id")
     ap.add_argument("-n", "--limit", type=int, default=5)

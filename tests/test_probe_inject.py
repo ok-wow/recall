@@ -16,7 +16,7 @@ channel, and then the one hit that mattered is invisible too. Precision is the
 whole product here.
 
 The catalog those fixtures match against is built by this file, in a temp
-COMPOUND_HOME, by the real index builder -- see the FM/PF corpus below. A fresh
+RECALL_HOME, by the real index builder -- see the FM/PF corpus below. A fresh
 clone ships no catalogs, so a suite that read the machine's index had no
 positive case at all and still reported 18 of 25 green.
 """
@@ -35,18 +35,18 @@ from pathlib import Path
 # session ids with any previous run.
 RUN = uuid.uuid4().hex[:8]
 
-HOME = Path(os.environ.get("COMPOUND_HOME") or Path.home() / ".compound")
+HOME = Path(os.environ.get("RECALL_HOME") or Path.home() / ".recall")
 REPO = Path(__file__).resolve().parent.parent
 
 # The hook core is invoked directly, not through its shell wrapper, so the
 # suite tests the matcher rather than the wrapper's dependency guards.
-_SKILL_DIR = os.environ.get("COMPOUND_SKILL_DIR")
+_SKILL_DIR = os.environ.get("RECALL_SKILL_DIR")
 if _SKILL_DIR:
-    HOOK = Path(_SKILL_DIR) / "compound-probe-inject.py"
-elif (REPO / "scripts" / "compound-probe-inject.py").exists():
-    HOOK = REPO / "scripts" / "compound-probe-inject.py"
+    HOOK = Path(_SKILL_DIR) / "recall-probe-inject.py"
+elif (REPO / "scripts" / "recall-probe-inject.py").exists():
+    HOOK = REPO / "scripts" / "recall-probe-inject.py"
 else:
-    HOOK = REPO / "hooks" / "compound-probe-inject.py"
+    HOOK = REPO / "hooks" / "recall-probe-inject.py"
 
 # (should_fire, text)
 PROMPTS = [
@@ -80,7 +80,7 @@ EDITS = [
 # no catalogs, so there is no index and nothing can fire. Every "should fire"
 # case was silently untestable while every "should be silent" case kept passing
 # -- 18/25 green with the precision-vs-recall point of the suite entirely gone.
-# So the suite builds its own catalog in a temp COMPOUND_HOME and runs the real
+# So the suite builds its own catalog in a temp RECALL_HOME and runs the real
 # index builder over it. Same discipline as test_recall.py: the data the
 # assertions need is created by the test, never borrowed from the machine.
 #
@@ -201,7 +201,7 @@ PF = [
      "summary": "The suite drove the hook as a subprocess with inherited env, and 170 of 378 rows in "
                 "the signal log turned out to be fixtures.",
      "fix_pattern": "Point the log and the dedupe store at a temp dir for every fixture call.",
-     "probe_when": ["a suite that drives `compound-probe-inject.py` as a subprocess",
+     "probe_when": ["a suite that drives `recall-probe-inject.py` as a subprocess",
                     "`surfaced.jsonl` growing during a test run"],
      "recurrences": 1},
 ]
@@ -244,9 +244,9 @@ def filler_entries():
 def build_probe_index() -> Path:
     """Write the synthetic catalog and run the REAL builder over it.
 
-    COMPOUND_HOME is the documented seam for all mutable state and the injector
-    reads $COMPOUND_HOME/probe-index.json, so a temp home is enough to keep the
-    real ~/.compound untouched — including its index, which a rebuild pointed
+    RECALL_HOME is the documented seam for all mutable state and the injector
+    reads $RECALL_HOME/probe-index.json, so a temp home is enough to keep the
+    real ~/.recall untouched — including its index, which a rebuild pointed
     anywhere else would have overwritten with these fixture entries.
 
     The builder is run rather than hand-writing an index, because half of what
@@ -256,7 +256,7 @@ def build_probe_index() -> Path:
     """
     import yaml
 
-    home = Path(tempfile.mkdtemp(prefix=f"compound-probe-home-{RUN}-"))
+    home = Path(tempfile.mkdtemp(prefix=f"recall-probe-home-{RUN}-"))
     catalogs = home / "catalogs"
     catalogs.mkdir()
     (catalogs / "FAILURE_MODES.yaml").write_text(
@@ -264,8 +264,8 @@ def build_probe_index() -> Path:
     (catalogs / "PROCESS_FAILURES.yaml").write_text(yaml.safe_dump(PF, sort_keys=False))
     p = subprocess.run(
         [sys.executable, str(BUILDER)], capture_output=True, text=True,
-        env={**os.environ, "COMPOUND_HOME": str(home),
-             "COMPOUND_CATALOG_DIR": str(catalogs)},
+        env={**os.environ, "RECALL_HOME": str(home),
+             "RECALL_CATALOG_DIR": str(catalogs)},
     )
     if p.returncode != 0:
         raise SystemExit(f"could not build the test probe index with {BUILDER}:\n"
@@ -278,12 +278,12 @@ TEST_HOME = build_probe_index()
 # Fixtures must not land in the production signal log. That log is the only
 # evidence of whether retrieval works, and for months this suite wrote into it
 # -- 170 of 378 rows -- so every metric derived from it moved when the tests ran.
-TEST_LOG = Path(tempfile.gettempdir()) / f"compound-probe-surfaced-test-{RUN}.jsonl"
-TEST_STATE = Path(tempfile.gettempdir()) / f"compound-probe-state-test-{RUN}"
+TEST_LOG = Path(tempfile.gettempdir()) / f"recall-probe-surfaced-test-{RUN}.jsonl"
+TEST_STATE = Path(tempfile.gettempdir()) / f"recall-probe-state-test-{RUN}"
 TEST_ENV = {**os.environ,
-            "COMPOUND_HOME": str(TEST_HOME),
-            "COMPOUND_PROBE_SURFACED_LOG": str(TEST_LOG),
-            "COMPOUND_PROBE_STATE_DIR": str(TEST_STATE)}
+            "RECALL_HOME": str(TEST_HOME),
+            "RECALL_PROBE_SURFACED_LOG": str(TEST_LOG),
+            "RECALL_PROBE_STATE_DIR": str(TEST_STATE)}
 PROD_STATE = HOME / "probe-state"
 
 

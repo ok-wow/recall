@@ -11,9 +11,9 @@ import sys
 import tempfile
 
 # digest_transcript lives in the scripts dir, a sibling of tests/ in the repo.
-# COMPOUND_SKILL_DIR overrides that when the scripts are installed elsewhere.
+# RECALL_SKILL_DIR overrides that when the scripts are installed elsewhere.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SKILL_DIR = os.environ.get("COMPOUND_SKILL_DIR") or os.path.join(_REPO_ROOT, "scripts")
+SKILL_DIR = os.environ.get("RECALL_SKILL_DIR") or os.path.join(_REPO_ROOT, "scripts")
 sys.path.insert(0, SKILL_DIR)
 import digest_transcript as dt
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic transcript digest for compound drains.
+"""Deterministic transcript digest for Recall drains.
 
 Encodes learnings.yaml::preprocess-oversized-transcripts-into-digests-before-
 parallel-distill (2026-07-11): oversized .jsonl transcripts are dominated by
@@ -27,7 +27,7 @@ oversized sessions:
    whole, and earlier assistant narration is uniformly sampled to fit.
 
 Caps: user 6000 chars, assistant 1800, error 400, total digest 320KB
-(COMPOUND_DIGEST_TOTAL_CAP overrides). Attachments, file-read payloads, stdout,
+(RECALL_DIGEST_TOTAL_CAP overrides). Attachments, file-read payloads, stdout,
 thinking/reasoning, and hook noise are dropped. Stdlib only.
 
 Usage: digest_transcript.py <transcript.jsonl> <out.md> [assistant_cap]
@@ -41,7 +41,7 @@ import sys
 USER_CAP = 6000
 ASSISTANT_CAP = 1800
 ERROR_CAP = 400
-TOTAL_CAP = int(os.environ.get("COMPOUND_DIGEST_TOTAL_CAP", 320 * 1024))
+TOTAL_CAP = int(os.environ.get("RECALL_DIGEST_TOTAL_CAP", 320 * 1024))
 
 # Fraction of the session, measured from the end, whose assistant narration is
 # kept whole no matter what. The conclusion of a session is its highest-value

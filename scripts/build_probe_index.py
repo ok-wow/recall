@@ -27,14 +27,14 @@ def env_path(name: str, default: Path) -> Path:
     return Path(raw).expanduser() if raw else default
 
 
-COMPOUND_HOME = env_path("COMPOUND_HOME", Path.home() / ".compound")
-CATALOG_DIR = env_path("COMPOUND_CATALOG_DIR", COMPOUND_HOME / "catalogs")
+RECALL_HOME = env_path("RECALL_HOME", Path.home() / ".recall")
+CATALOG_DIR = env_path("RECALL_CATALOG_DIR", RECALL_HOME / "catalogs")
 
 CATALOGS = {
     "FM": CATALOG_DIR / "FAILURE_MODES.yaml",
     "PF": CATALOG_DIR / "PROCESS_FAILURES.yaml",
 }
-INDEX_PATH = COMPOUND_HOME / "probe-index.json"
+INDEX_PATH = RECALL_HOME / "probe-index.json"
 
 BACKTICK = re.compile(r"`([^`]+)`")
 

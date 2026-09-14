@@ -1,7 +1,7 @@
-# compound
+# okWOW • Recall
 
 A coding agent solves a problem, you close the session, and the solution is gone. Next
-week it hits the same wall and works it out again from scratch. `compound` is a loop that
+week it hits the same wall and works it out again from scratch. **okWOW • Recall** is a loop that
 turns finished sessions into a searchable corpus of failure modes, and puts the relevant
 ones back in front of the agent while it works.
 
@@ -41,10 +41,10 @@ matching lessons.
 ## Install
 
 ```bash
-git clone <this repo> ~/compound && cd ~/compound && ./install.sh
+git clone <this repo> ~/recall && cd ~/recall && ./install.sh
 ```
 
-`install.sh` registers the hooks with your agent, creates `~/.compound`, and schedules the
+`install.sh` registers the hooks with your agent, creates `~/.recall`, and schedules the
 drain. It prints everything it is about to do and asks first.
 
 Requires Python 3.9+, PyYAML, and an agent CLI that supports session hooks.
@@ -74,10 +74,10 @@ Every path resolves through an environment variable with a default. No absolute 
 
 | Variable | Default | Holds |
 |---|---|---|
-| `COMPOUND_HOME` | `~/.compound` | all mutable state |
-| `COMPOUND_CATALOG_DIR` | `$COMPOUND_HOME/catalogs` | the YAML catalogs |
-| `COMPOUND_AGENT_BIN` | `claude` | CLI used for unattended distillation |
-| `COMPOUND_HOST_DIR` | `~/.claude` | your agent's dir (transcripts, settings) |
+| `RECALL_HOME` | `~/.recall` | all mutable state |
+| `RECALL_CATALOG_DIR` | `$RECALL_HOME/catalogs` | the YAML catalogs |
+| `RECALL_AGENT_BIN` | `claude` | CLI used for unattended distillation |
+| `RECALL_HOST_DIR` | `~/.claude` | your agent's dir (transcripts, settings) |
 
 ## What it deliberately does not do
 

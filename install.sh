@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — wire the compound loop into your agent.
+# install.sh — wire the okWOW • Recall loop into your agent.
 #
 # This edits your agent's settings file and installs a scheduled job. Both are
 # things you should be able to undo without reading the source, so: it prints a
@@ -16,10 +16,10 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMPOUND_HOME="${COMPOUND_HOME:-$HOME/.compound}"
-COMPOUND_CATALOG_DIR="${COMPOUND_CATALOG_DIR:-$COMPOUND_HOME/catalogs}"
-COMPOUND_HOST_DIR="${COMPOUND_HOST_DIR:-$HOME/.claude}"
-SETTINGS="$COMPOUND_HOST_DIR/settings.json"
+RECALL_HOME="${RECALL_HOME:-$HOME/.recall}"
+RECALL_CATALOG_DIR="${RECALL_CATALOG_DIR:-$RECALL_HOME/catalogs}"
+RECALL_HOST_DIR="${RECALL_HOST_DIR:-$HOME/.claude}"
+SETTINGS="$RECALL_HOST_DIR/settings.json"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 DRY=0
 UNINSTALL=0
@@ -44,7 +44,7 @@ python3 -c 'import yaml' 2>/dev/null || {
 
 if [ ! -f "$SETTINGS" ]; then
   echo "no agent settings at $SETTINGS" >&2
-  echo "set COMPOUND_HOST_DIR to your agent's directory and re-run." >&2
+  echo "set RECALL_HOST_DIR to your agent's directory and re-run." >&2
   exit 1
 fi
 python3 -c "import json,sys;json.load(open('$SETTINGS'))" 2>/dev/null || {
@@ -52,8 +52,8 @@ python3 -c "import json,sys;json.load(open('$SETTINGS'))" 2>/dev/null || {
 
 # ---------------------------------------------------------------- uninstall --
 if [ "$UNINSTALL" -eq 1 ]; then
-  say "Removing compound hooks from $SETTINGS (state under $COMPOUND_HOME is kept)."
-  cp "$SETTINGS" "$SETTINGS.compound-backup-$STAMP"
+  say "Removing Recall hooks from $SETTINGS (state under $RECALL_HOME is kept)."
+  cp "$SETTINGS" "$SETTINGS.recall-backup-$STAMP"
   python3 - "$SETTINGS" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -62,7 +62,7 @@ hooks = d.get("hooks", {})
 for ev in list(hooks):
     for entry in hooks[ev]:
         entry["hooks"] = [h for h in entry.get("hooks", [])
-                          if "compound-" not in h.get("command", "")]
+                          if "recall-" not in h.get("command", "")]
     hooks[ev] = [e for e in hooks[ev] if e.get("hooks")]
     if not hooks[ev]:
         del hooks[ev]
@@ -70,26 +70,26 @@ json.dump(d, open(p, "w"), indent=2)
 print("  hooks removed")
 PY
   if command -v launchctl >/dev/null 2>&1; then
-    launchctl bootout "gui/$(id -u)/compound.drain" 2>/dev/null || true
-    rm -f "$HOME/Library/LaunchAgents/compound.drain.plist"
+    launchctl bootout "gui/$(id -u)/ai.okwow.recall-drain" 2>/dev/null || true
+    rm -f "$HOME/Library/LaunchAgents/ai.okwow.recall-drain.plist"
     say "  scheduled drain removed"
   else
-    say "  remove the compound drain line from your crontab by hand"
+    say "  remove the Recall drain line from your crontab by hand"
   fi
-  say "Done. Backup: $SETTINGS.compound-backup-$STAMP"
+  say "Done. Backup: $SETTINGS.recall-backup-$STAMP"
   exit 0
 fi
 
 # --------------------------------------------------------------------- plan --
 say ""
-say "compound — install plan"
+say "okWOW • Recall — install plan"
 say ""
 say "  repo         $REPO_DIR"
-say "  state        $COMPOUND_HOME            (created if absent)"
-say "  catalogs     $COMPOUND_CATALOG_DIR"
-say "  agent dir    $COMPOUND_HOST_DIR"
+say "  state        $RECALL_HOME            (created if absent)"
+say "  catalogs     $RECALL_CATALOG_DIR"
+say "  agent dir    $RECALL_HOST_DIR"
 say ""
-say "  1. create $COMPOUND_HOME/{pending,processed,quarantine,digests,probe-state}"
+say "  1. create $RECALL_HOME/{pending,processed,quarantine,digests,probe-state}"
 say "  2. seed empty catalogs if none exist (never overwrites)"
 say "  3. register 4 hooks in $SETTINGS:"
 say "       SessionEnd        capture a finished session"
@@ -108,27 +108,27 @@ read -r reply
 case "$reply" in y|Y|yes|YES) ;; *) say "aborted"; exit 0 ;; esac
 
 # ------------------------------------------------------------------ install --
-mkdir -p "$COMPOUND_HOME"/{pending,processed,quarantine,digests,probe-state}
-mkdir -p "$COMPOUND_CATALOG_DIR"
+mkdir -p "$RECALL_HOME"/{pending,processed,quarantine,digests,probe-state}
+mkdir -p "$RECALL_CATALOG_DIR"
 for c in FAILURE_MODES PROCESS_FAILURES; do
-  f="$COMPOUND_CATALOG_DIR/$c.yaml"
+  f="$RECALL_CATALOG_DIR/$c.yaml"
   # Never clobber a corpus. An install that can destroy months of captured work
   # is worse than one that fails.
   [ -e "$f" ] || printf '# %s — filled by the drain as your sessions are distilled.\n[]\n' "$c" > "$f"
 done
-say "  state ready at $COMPOUND_HOME"
+say "  state ready at $RECALL_HOME"
 
-cp "$SETTINGS" "$SETTINGS.compound-backup-$STAMP"
+cp "$SETTINGS" "$SETTINGS.recall-backup-$STAMP"
 python3 - "$SETTINGS" "$REPO_DIR" <<'PY'
 import json, sys
 settings, repo = sys.argv[1], sys.argv[2]
 d = json.load(open(settings))
 hooks = d.setdefault("hooks", {})
 WIRING = [
-    ("SessionEnd",       f"{repo}/hooks/compound-sessionend.sh"),
-    ("SessionStart",     f"{repo}/hooks/compound-sessionstart.sh"),
-    ("UserPromptSubmit", f"{repo}/hooks/compound-probe-inject.sh"),
-    ("PostToolUse",      f"{repo}/hooks/compound-probe-inject.sh"),
+    ("SessionEnd",       f"{repo}/hooks/recall-sessionend.sh"),
+    ("SessionStart",     f"{repo}/hooks/recall-sessionstart.sh"),
+    ("UserPromptSubmit", f"{repo}/hooks/recall-probe-inject.sh"),
+    ("PostToolUse",      f"{repo}/hooks/recall-probe-inject.sh"),
 ]
 added = 0
 for event, cmd in WIRING:
@@ -143,29 +143,29 @@ print(f"  {added} hook(s) registered ({len(WIRING) - added} already present)")
 PY
 
 if command -v launchctl >/dev/null 2>&1; then
-  PLIST="$HOME/Library/LaunchAgents/compound.drain.plist"
+  PLIST="$HOME/Library/LaunchAgents/ai.okwow.recall-drain.plist"
   mkdir -p "$(dirname "$PLIST")"
   cat > "$PLIST" <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>compound.drain</string>
+  <key>Label</key><string>ai.okwow.recall-drain</string>
   <key>ProgramArguments</key>
-  <array><string>/bin/bash</string><string>$REPO_DIR/hooks/compound-drain.sh</string></array>
+  <array><string>/bin/bash</string><string>$REPO_DIR/hooks/recall-drain.sh</string></array>
   <key>EnvironmentVariables</key>
-  <dict><key>COMPOUND_HOME</key><string>$COMPOUND_HOME</string>
-        <key>COMPOUND_CATALOG_DIR</key><string>$COMPOUND_CATALOG_DIR</string>
-        <key>COMPOUND_HOST_DIR</key><string>$COMPOUND_HOST_DIR</string></dict>
+  <dict><key>RECALL_HOME</key><string>$RECALL_HOME</string>
+        <key>RECALL_CATALOG_DIR</key><string>$RECALL_CATALOG_DIR</string>
+        <key>RECALL_HOST_DIR</key><string>$RECALL_HOST_DIR</string></dict>
   <key>StartInterval</key><integer>900</integer>
   <key>RunAtLoad</key><false/>
 </dict></plist>
 PLISTEOF
-  launchctl bootout "gui/$(id -u)/compound.drain" 2>/dev/null || true
+  launchctl bootout "gui/$(id -u)/ai.okwow.recall-drain" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "$PLIST"
   say "  drain scheduled every 900s"
 else
   say "  launchctl not found — add this to your crontab:"
-  say "    */15 * * * * COMPOUND_HOME=$COMPOUND_HOME bash $REPO_DIR/hooks/compound-drain.sh"
+  say "    */15 * * * * RECALL_HOME=$RECALL_HOME bash $REPO_DIR/hooks/recall-drain.sh"
 fi
 
 say ""

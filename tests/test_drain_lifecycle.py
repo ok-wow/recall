@@ -2,7 +2,7 @@
 """Marker-lifecycle fixtures for the drain.
 
 Runs the REAL drain script against a stub worker inside a throwaway
-COMPOUND_HOME, so none of this touches the live queue.
+RECALL_HOME, so none of this touches the live queue.
 
 The case that matters is `completed_no_clear`: a worker that exits 0 and leaves
 the marker alone. For three months that read as total failure and burned retry
@@ -20,8 +20,8 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-HOOK_DIR = Path(os.environ.get("COMPOUND_HOOK_DIR", REPO / "hooks"))
-DRAIN = HOOK_DIR / "compound-drain.sh"
+HOOK_DIR = Path(os.environ.get("RECALL_HOOK_DIR", REPO / "hooks"))
+DRAIN = HOOK_DIR / "recall-drain.sh"
 SESSION = "11111111-2222-3333-4444-555555555555"
 
 
@@ -46,14 +46,14 @@ def run_case(stub_body: str) -> dict:
         # HOME is redirected too, so anything still home-relative cannot reach
         # the real one.
         "HOME": str(home),
-        "COMPOUND_HOME": str(home),
-        "COMPOUND_HOST_DIR": str(home / "host"),
-        "COMPOUND_AGENT_BIN": str(stub),
-        "COMPOUND_DRAIN_BUDGET": "60",
-        "COMPOUND_DRAIN_SESSION_TIMEOUT": "8",
-        "COMPOUND_DRAIN_PERMISSIONS": str(home / "perms.json"),
+        "RECALL_HOME": str(home),
+        "RECALL_HOST_DIR": str(home / "host"),
+        "RECALL_AGENT_BIN": str(stub),
+        "RECALL_DRAIN_BUDGET": "60",
+        "RECALL_DRAIN_SESSION_TIMEOUT": "8",
+        "RECALL_DRAIN_PERMISSIONS": str(home / "perms.json"),
     })
-    env.pop("COMPOUND_WORKER", None)
+    env.pop("RECALL_WORKER", None)
     # The drain FAILS CLOSED without deny rules: it will not run an unattended
     # agent in auto mode with nothing denied. A fixture handing it an empty
     # deny list therefore exercises the refusal path, not the drain. Give it a
@@ -79,7 +79,7 @@ CASES = [
      {"marker": False, "ledger": True, "attempt": False, "authdown": False}),
 
     ("worker completed and cleared its own marker",
-     f'rm -f "$COMPOUND_HOME/pending/{SESSION}.json"; echo done; exit 0',
+     f'rm -f "$RECALL_HOME/pending/{SESSION}.json"; echo done; exit 0',
      {"marker": False, "ledger": True, "attempt": False, "authdown": False}),
 
     ("worker crashed (non-zero exit)",
@@ -136,15 +136,15 @@ def run_reap_case(digests: dict, pending=None) -> dict:
     env = dict(os.environ)
     env.update({
         "HOME": str(home),
-        "COMPOUND_HOME": str(home),
-        "COMPOUND_HOST_DIR": str(home / "host"),
-        "COMPOUND_AGENT_BIN": str(stub),
-        "COMPOUND_DRAIN_BUDGET": "30",
-        "COMPOUND_DRAIN_SESSION_TIMEOUT": "8",
-        "COMPOUND_DRAIN_PERMISSIONS": str(home / "perms.json"),
-        "COMPOUND_DIGEST_RETENTION_DAYS": "14",
+        "RECALL_HOME": str(home),
+        "RECALL_HOST_DIR": str(home / "host"),
+        "RECALL_AGENT_BIN": str(stub),
+        "RECALL_DRAIN_BUDGET": "30",
+        "RECALL_DRAIN_SESSION_TIMEOUT": "8",
+        "RECALL_DRAIN_PERMISSIONS": str(home / "perms.json"),
+        "RECALL_DIGEST_RETENTION_DAYS": "14",
     })
-    env.pop("COMPOUND_WORKER", None)
+    env.pop("RECALL_WORKER", None)
     # The drain FAILS CLOSED without deny rules: it will not run an unattended
     # agent in auto mode with nothing denied. A fixture handing it an empty
     # deny list therefore exercises the refusal path, not the drain. Give it a
