@@ -15,6 +15,7 @@ It runs entirely on your machine. Nothing is sent anywhere.
                      (scheduled, unattended)     ▼
                  a fresh agent reads the session and writes down
                  what failed, why, and the fix ──► catalogs (YAML)
+                 (what it writes is decided by skills/compound)
                                                      │
                         ┌────────────────────────────┴───────────────┐
                         ▼                                            ▼
@@ -44,8 +45,13 @@ matching lessons.
 git clone <this repo> ~/recall && cd ~/recall && ./install.sh
 ```
 
-`install.sh` registers the hooks with your agent, creates `~/.recall`, and schedules the
-drain. It prints everything it is about to do and asks first.
+`install.sh` registers the hooks with your agent, links the `/compound` skill into your
+agent's skills directory, creates `~/.recall`, and schedules the drain. It prints
+everything it is about to do and asks first.
+
+The skill is the half that decides what gets written down. Without it the loop still
+captures and drains, and then writes nothing — an empty corpus is indistinguishable from
+a quiet one, so it is linked at install time rather than left as a manual step.
 
 Requires Python 3.9+, PyYAML, and an agent CLI that supports session hooks.
 
@@ -127,9 +133,16 @@ A few that shaped the design:
 python3 -m tests.run    # or: for t in tests/test_*.py; do python3 "$t"; done
 ```
 
-The suites assert behaviour that matters rather than coverage: that a correct no-op is
+Six suites. They assert behaviour that matters rather than coverage: that a correct no-op is
 distinguishable from a failure, that housekeeping runs on the idle path, that a test cannot
 write to production state, and that an entry written in prose is still retrievable.
+
+One of them, `test_ships_what_it_invokes`, exists because an earlier cut of this repo
+shipped every part of the loop except the skill the drain invokes, and five green suites
+said nothing — the drain suite replaces the agent with a stub, so the stub stood exactly
+where the missing piece belonged. It now checks statically that every slash command and
+sibling script the shipped code names resolves inside the repo. Gate on the exit code,
+not on a fixture total.
 
 ## License
 

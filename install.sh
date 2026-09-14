@@ -20,6 +20,7 @@ RECALL_HOME="${RECALL_HOME:-$HOME/.recall}"
 RECALL_CATALOG_DIR="${RECALL_CATALOG_DIR:-$RECALL_HOME/catalogs}"
 RECALL_HOST_DIR="${RECALL_HOST_DIR:-$HOME/.claude}"
 SETTINGS="$RECALL_HOST_DIR/settings.json"
+COMPOUND_SKILL_DEST="${COMPOUND_SKILL_DEST:-$RECALL_HOST_DIR/skills/compound}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 DRY=0
 UNINSTALL=0
@@ -69,6 +70,10 @@ for ev in list(hooks):
 json.dump(d, open(p, "w"), indent=2)
 print("  hooks removed")
 PY
+  # Only ever remove our own symlink, never a directory someone put there.
+  if [ -L "$COMPOUND_SKILL_DEST" ]; then
+    rm -f "$COMPOUND_SKILL_DEST"; say "  /compound skill unlinked"
+  fi
   if command -v launchctl >/dev/null 2>&1; then
     launchctl bootout "gui/$(id -u)/ai.okwow.recall-drain" 2>/dev/null || true
     rm -f "$HOME/Library/LaunchAgents/ai.okwow.recall-drain.plist"
@@ -96,7 +101,8 @@ say "       SessionEnd        capture a finished session"
 say "       SessionStart      report queue + retrieval health"
 say "       UserPromptSubmit  match your prompt against the corpus"
 say "       PostToolUse       match file edits against the corpus"
-say "  4. schedule the drain every 15 minutes"
+say "  4. install the /compound skill into $COMPOUND_SKILL_DEST"
+say "  5. schedule the drain every 15 minutes"
 say ""
 say "  A backup of settings.json is written before any edit."
 say "  Reverse everything with: ./install.sh --uninstall"
@@ -117,6 +123,17 @@ for c in FAILURE_MODES PROCESS_FAILURES; do
   [ -e "$f" ] || printf '# %s — filled by the drain as your sessions are distilled.\n[]\n' "$c" > "$f"
 done
 say "  state ready at $RECALL_HOME"
+
+# The drain invokes "/compound"; without this the loop captures and drains and
+# then writes nothing, leaving an empty corpus that looks like a quiet one.
+# Symlinked rather than copied so `git pull` updates the skill with the code.
+mkdir -p "$(dirname "$COMPOUND_SKILL_DEST")"
+if [ -e "$COMPOUND_SKILL_DEST" ] && [ ! -L "$COMPOUND_SKILL_DEST" ]; then
+  say "  a real directory already sits at $COMPOUND_SKILL_DEST — leaving it alone"
+else
+  ln -sfn "$REPO_DIR/skills/compound" "$COMPOUND_SKILL_DEST"
+  say "  /compound skill linked -> $COMPOUND_SKILL_DEST"
+fi
 
 cp "$SETTINGS" "$SETTINGS.recall-backup-$STAMP"
 python3 - "$SETTINGS" "$REPO_DIR" <<'PY'

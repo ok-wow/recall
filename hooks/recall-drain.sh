@@ -317,7 +317,7 @@ while :; do
   # force-push, delete, reset --hard, merge, publish. A blocked step fails safe:
   # the marker stays queued, and human PR/merge ratification is untouched.
   RUNLOG=$(mktemp "${TMPDIR:-/tmp}/recall-drain.XXXXXX")
-  RECALL_WORKER=1 "$AGENT_PATH" \
+  RECALL_WORKER=1 RECALL_SKILL_DIR="$SKILL_DIR" "$AGENT_PATH" \
     -p "/compound $SESSION" \
     --model "$MODEL" \
     --permission-mode auto \
