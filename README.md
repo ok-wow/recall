@@ -164,8 +164,12 @@ python3 ~/recall/scripts/recall.py "how do we handle a renewal that slipped"
 # one entry in full, with the triggers that make it fire
 python3 ~/recall/scripts/recall.py --id the-q3-figures-live-in-the-finance-sheet
 
-# what has repeated ANYWAY, despite being written down — the compounding scoreboard
+# what has repeated ANYWAY, despite being written down
 python3 ~/recall/scripts/recall.py --recurring
+
+# ...and whether those repeats were ever SHOWN first — the honest scoreboard
+python3 ~/recall/scripts/measure_prevention.py
+python3 ~/recall/scripts/measure_prevention.py --gaps   # lessons that never surfaced
 
 # what has been learned, and how much of it can be recalled
 python3 ~/recall/scripts/recall.py --stats
@@ -209,10 +213,24 @@ the script that reads it. `--host codex` switches the last two defaults to
 
 ## Honest limitations
 
-- **Recalling is not yet compounding.** Every measurement here proves the right lesson
-  appeared. None proves it changed the outcome. 10% of lessons in the source memory
-  recurred *anyway* — written down, and repeated regardless. That counter, not the
-  number of times something surfaced, is the honest scoreboard.
+- **Recalling is not yet compounding.** Nothing here is causal. That a lesson appeared
+  and the failure did not repeat is not proof it helped — the situation may simply not
+  have come back. Only withholding a lesson from a random share of eligible moments and
+  comparing the two arms would settle it, and Recall does not do that.
+
+  What it *can* tell you is why a repeat happened, which is the more useful half. Run
+  `measure_prevention.py`: a lesson that repeated after being shown is a **heeding**
+  problem — rewrite the entry, change its timing, or enforce it. A lesson that repeated
+  having never been shown is a **delivery** problem, and more retrieval is exactly the
+  fix. Reported as one number they are indistinguishable. Split on the memory this came
+  from, **23 of 26 measurable repeats had never surfaced at all** — so the headline
+  "10% recurred anyway" was mostly a verdict on delivery, not on memory.
+
+  The catch is the denominator. A recurrence written as a bare counter carries no date,
+  so it cannot be placed relative to the moment the lesson fired: 189 of 217 events in
+  that corpus are unmeasurable for this reason alone. The tool prints that bucket as
+  loudly as the ones it can measure, because a denominator that quietly shrinks to the
+  convenient cases is the failure this whole thing exists to catch.
 - **Push cannot reach prose.** An entry whose triggers are conceptual rather than literal
   will never auto-inject. That is why `recall` exists and why the agent is told to run it.
 - **Distillation costs tokens.** The drain spawns a headless agent per session. It is
@@ -247,9 +265,17 @@ A few that shaped the design:
 python3 -m tests.run    # or: for t in tests/test_*.py; do python3 "$t"; done
 ```
 
-Eight suites. They assert behaviour that matters rather than coverage: that a correct no-op is
+Nine suites. They assert behaviour that matters rather than coverage: that a correct no-op is
 distinguishable from a failure, that housekeeping runs on the idle path, that a test cannot
 write to production state, and that an entry written in prose is still retrievable.
+
+`test_measure_prevention` is the newest and the one most worth reading, because the thing it
+guards is a conclusion rather than a crash. If a fire logged AFTER a repeat were counted as
+having preceded it, every delivery failure would be relabelled a heeding failure, and the
+tool would send you to rewrite entries that were never shown to anyone. Nothing would look
+broken. So the suite asserts the ordering directly, and asserts that fixture rows never count
+as real delivery — this project once published a retrieval baseline where 45% of the evidence
+was its own test data.
 
 One of them, `test_ships_what_it_invokes`, exists because an earlier cut of this repo
 shipped every part of the loop except the skill the drain invokes, and five green suites
