@@ -33,6 +33,7 @@ import os
 import re
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 # .expanduser() on both: build_probe_index.py and recall-probe-inject.py already
@@ -47,6 +48,13 @@ CATALOGS = {"FM": "FAILURE_MODES.yaml", "PF": "PROCESS_FAILURES.yaml",
             "DE": "DECISIONS.yaml"}
 PROBE_INDEX = Path(os.environ.get("RECALL_PROBE_INDEX")
                    or RECALL_HOME / "probe-index.json").expanduser()
+# The SAME log auto-injection writes, so one analysis joins both retrieval paths.
+# Logging only push made "never surfaced" mean "never AUTO-INJECTED": an entry a
+# person or agent pulled and then ignored was counted as a delivery failure when
+# it was a heeding failure. Those two need opposite fixes, so conflating them
+# produces a number that cannot drive a decision.
+SURFACED_LOG = Path(os.environ.get("RECALL_SURFACED_LOG")
+                    or RECALL_HOME / "surfaced.jsonl").expanduser()
 
 WORD = re.compile(r"[a-z0-9][a-z0-9._/-]*", re.I)
 # Ordinary English that carries no retrieval signal. Deliberately short: BM25's
@@ -257,6 +265,40 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None, ful
             print(f"    - {p}")
 
 
+def log_pull(shown: list, mode: str, query: str = "") -> None:
+    """Record entries a PULL actually put in front of someone.
+
+    Only need-driven retrieval is logged -- a free-text query and `--id`. The
+    browse modes are reports ABOUT the corpus, not a lesson delivered at a moment
+    it was needed, and counting them would inflate surfacing with the act of
+    auditing surfacing.
+
+    The choice can only UNDER-count delivery, never flatter it. That bias is
+    deliberate: it errs toward reporting a coverage failure, which is the safe
+    direction for a metric whose job is to stop the loop marking its own homework.
+
+    Never raises. A retrieval tool that fails because its telemetry failed is
+    worse than no telemetry.
+    """
+    try:
+        session = os.environ.get("RECALL_SESSION_ID") or "cli"
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        SURFACED_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(SURFACED_LOG, "a", encoding="utf-8") as fh:
+            for e, score, hits in shown:
+                fh.write(json.dumps({
+                    "ts": ts,
+                    "session": session,
+                    "event": mode,          # recall-query | recall-id
+                    "entry": e["key"],
+                    "score": round(score, 1) if isinstance(score, (int, float)) else None,
+                    "tokens": hits,
+                    "query": query[:200],
+                }, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="recall", description="Query the okWOW • Recall corpus.")
     ap.add_argument("query", nargs="*", help="free-text question")
@@ -319,6 +361,7 @@ def main() -> int:
                     if a.id.lower() in str(e["id"]).lower()][:5]
             sys.stderr.write(f"recall: no entry '{a.id}'" + (f"\n  did you mean: {', '.join(near)}\n" if near else "\n"))
             return 1
+        log_pull([(m[0], None, [])], "recall-id", str(a.id))
         if a.json:
             print(json.dumps(m[0]["raw"], indent=2, default=str))
         else:
@@ -343,7 +386,9 @@ def main() -> int:
             return not any(str(e["raw"].get(k) or "").strip() for k in keys)
         sel = [e for e in entries if _empty(e, BODY) and _empty(e, FIX)][:a.limit]
     elif a.query:
-        ranked = bm25(entries, " ".join(a.query))[:a.limit]
+        q = " ".join(a.query)
+        ranked = bm25(entries, q)[:a.limit]
+        log_pull(ranked, "recall-query", q)
         if a.json:
             print(json.dumps([{"id": e["id"], "catalog": e["catalog"], "score": round(s, 2),
                                "matched": h, "recurrences": e["recurrences"]} for e, s, h in ranked], indent=2))

@@ -71,9 +71,16 @@ def catalog_dir() -> Path:
     return d
 
 
-def run(d: Path, *args: str, probe_index: str | None = None) -> tuple[int, str]:
+def run(d: Path, *args: str, probe_index: str | None = None,
+        surfaced_log: str | None = None) -> tuple[int, str]:
+    # RECALL_SURFACED_LOG is not optional. recall.py logs every pull, so without
+    # this every fixture query would append synthetic entry ids to the user's real
+    # retrieval log -- the exact contamination that once made 45% of this project's
+    # published retrieval evidence fixtures. `surfaced_log` defaults INTO the temp
+    # dir so a caller cannot forget it.
     env = {**os.environ, "RECALL_CATALOG_DIR": str(d),
-           "RECALL_PROBE_INDEX": probe_index or str(d / "nonexistent-index.json")}
+           "RECALL_PROBE_INDEX": probe_index or str(d / "nonexistent-index.json"),
+           "RECALL_SURFACED_LOG": surfaced_log or str(d / "surfaced.jsonl")}
     p = subprocess.run([sys.executable, str(RECALL), *args],
                        capture_output=True, text=True, env=env)
     return p.returncode, p.stdout + p.stderr
@@ -200,6 +207,54 @@ def main() -> int:
           rc == 0 and '"entries": 0' in out.replace("'", '"'), out[:90])
     rc, out = run(_ed, "anything at all")
     check("empty corpus: a query is a clean no-match", rc == 0, f"rc={rc}")
+
+    # -- pull logging: the half of retrieval that was never recorded -----------
+    #
+    # Auto-injection has always logged what it fired. Pull logged nothing, so an
+    # analysis of "was this lesson surfaced before it recurred?" could only ever
+    # see push -- and an entry somebody pulled and then ignored was counted as a
+    # DELIVERY failure when it was a heeding failure. Opposite fixes.
+    #
+    # Two properties matter and both are asserted: need-driven retrieval records,
+    # and browsing does not. Counting `--recurring` as a surface would inflate the
+    # metric with the act of auditing the metric.
+    plog = d / "pull-probe.jsonl"
+
+    def rows() -> list:
+        if not plog.exists():
+            return []
+        return [json.loads(x) for x in plog.read_text().splitlines() if x.strip()]
+
+    run(d, "a follow-up in a handoff nobody rereads", surfaced_log=str(plog))
+    q = rows()
+    check("a query records what it put in front of you", len(q) >= 1, f"{len(q)} rows")
+    check("a pull row carries the join keys push uses",
+          bool(q) and {"ts", "session", "entry", "event"} <= set(q[0])
+          and q[0]["entry"].split(":")[0] in ("FM", "PF", "DE"),
+          repr(q[0]) if q else "no rows")
+    check("a pull row is labelled as a pull, not as an injection",
+          bool(q) and q[0]["event"] == "recall-query", q[0]["event"] if q else "-")
+
+    run(d, "--id", "recurring-entry", surfaced_log=str(plog))
+    check("--id records too — it is need-driven retrieval",
+          any(r["event"] == "recall-id" for r in rows()))
+
+    before = len(rows())
+    for flag in ("--recurring", "--unreachable", "--stats"):
+        run(d, flag, surfaced_log=str(plog))
+    check("browsing the corpus is NOT a surface",
+          len(rows()) == before, f"{before} -> {len(rows())}")
+
+    # The negative control that matters most: a suite that logs into production
+    # state is how this project once published a baseline that was wrong in both
+    # directions. Assert the override is honoured, not merely available.
+    prod = d / "must-never-be-written.jsonl"
+    env_probe = {**os.environ, "RECALL_CATALOG_DIR": str(d),
+                 "RECALL_SURFACED_LOG": str(plog), "RECALL_HOME": str(d / "fake-home")}
+    subprocess.run([sys.executable, str(RECALL), "anything"],
+                   capture_output=True, text=True, env=env_probe)
+    check("an overridden log means production is never touched",
+          not prod.exists() and not (d / "fake-home" / "surfaced.jsonl").exists())
 
     if fails:
         print(f"\nFAIL {len(fails)}/{ran[0]}")
