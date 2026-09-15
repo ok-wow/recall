@@ -21,12 +21,11 @@ already knows.
 Everything stays on your machine. Your memory is a file on your disk — no account,
 no telemetry, no server, nothing to sign up for.
 
-One caveat, stated plainly because you would find it anyway: **working out what a
-session taught is a model call.** Recall hands the finished session to whichever
-agent you already use, which sends it to that provider exactly as your live session
-did. That is the one place your work leaves the machine, and it is the same place it
-was already going. If your memory lives in a git checkout, the worker commits and
-pushes it — point it at a private repo, or at no repo.
+**Working out what a session taught is a model call.** Recall hands the finished
+session to the agent you already use, so it goes exactly where your live session was
+already going — and nowhere new. Your memory itself never travels: it is a file on
+your disk. Keep it in a git checkout and the worker commits there, so a private repo
+or no repo at all is entirely your call.
 
 ## The shape of it
 
@@ -91,11 +90,11 @@ an ordinary word that happens to appear.
 is already looking. It searches the full text of everything, including the lessons push
 can never reach.
 
-Without pull, every lesson that is a *judgement* rather than a phrase — how this client
-likes to be handled, why that approach was abandoned — gets written down perfectly and
-never surfaces again. In the memory this came from that was **43% of everything
-captured**, and nobody noticed for months. A memory that finds nothing looks exactly
-like a week where nothing was learned.
+This is the half most memory tools leave out, and it is the half that carries your
+judgement calls — how this client likes to be handled, why that approach was abandoned.
+Those never contain a literal to match on, so push alone would file them perfectly and
+never show them again. In the memory Recall came from, they were **43% of everything
+captured**. Pull is how you get that 43% back.
 
 ## What it captures
 
@@ -200,64 +199,80 @@ the drain's budgets, timeouts and paths; each is named and defaulted at the top 
 the script that reads it. `--host codex` switches the last two defaults to
 `~/.codex` and `codex`.
 
-## What it deliberately does not do
+## Deliberately small
 
-- **No cloud, no telemetry, no account of its own.** Your memory is a local file.
-  Distillation still goes to your model provider — see above; that is the one
-  place your session content leaves the machine, and it is the same place it went
-  when you were typing.
-- **No embedding model.** BM25 over full text, pure stdlib. It has to run inside a hook,
-  a cron job, and a fresh clone with nothing installed.
-- **No content ships.** This repo is the mechanism. The catalogs start empty and fill with
-  what your own work teaches it.
+- **Nothing to sign up for.** No cloud, no telemetry, no account, no dashboard. Your
+  memory is a file you own, on a disk you control. Distillation goes to your model
+  provider and nowhere else — the same place your typing already went.
+- **Nothing to provision.** BM25 over full text, pure stdlib. It runs inside a hook, a
+  cron job, and a fresh clone with nothing installed, because those are the only places
+  it ever needs to run.
+- **Nothing borrowed.** The catalogs start empty. What fills them is your work and only
+  your work, so the memory reads in your vocabulary from the first entry on.
 
-## Honest limitations
+## It measures itself
 
-- **Recalling is not yet compounding.** Nothing here is causal. That a lesson appeared
-  and the failure did not repeat is not proof it helped — the situation may simply not
-  have come back. Only withholding a lesson from a random share of eligible moments and
-  comparing the two arms would settle it, and Recall does not do that.
+Most memory tools can tell you how often they fired. Recall can tell you whether it
+*mattered*, which is a harder and much more useful question.
 
-  What it *can* tell you is why a repeat happened, which is the more useful half. Run
-  `measure_prevention.py`: a lesson that repeated after being shown is a **heeding**
-  problem — rewrite the entry, change its timing, or enforce it. A lesson that repeated
-  having never been shown is a **delivery** problem, and more retrieval is exactly the
-  fix. Reported as one number they are indistinguishable. Split on the memory this came
-  from, **23 of 26 measurable repeats had never surfaced at all** — so the headline
-  "10% recurred anyway" was mostly a verdict on delivery, not on memory.
+```bash
+python3 ~/recall/scripts/measure_prevention.py
+```
 
-  The catch is the denominator. A recurrence written as a bare counter carries no date,
-  so it cannot be placed relative to the moment the lesson fired: 189 of 217 events in
-  that corpus are unmeasurable for this reason alone. The tool prints that bucket as
-  loudly as the ones it can measure, because a denominator that quietly shrinks to the
-  convenient cases is the failure this whole thing exists to catch.
-- **Push cannot reach prose.** An entry whose triggers are conceptual rather than literal
-  will never auto-inject. That is why `recall` exists and why the agent is told to run it.
-- **Distillation costs tokens.** The drain spawns a headless agent per session. It is
-  bounded by a wall-clock budget and a per-session timeout, and it is idle-cheap, but it
-  is not free.
-- **Quality depends on your sessions.** A memory built from sloppy work is a memory of
-  sloppy lessons. It compounds whatever you actually do.
+When a lesson you captured comes true again, there are only two explanations, and they
+call for opposite responses:
 
-## Why the comments are long
+| | what it means | what to do |
+|---|---|---|
+| **Shown, then repeated** | The lesson reached you and did not change the outcome. | Rewrite it, retime it, or enforce it. More retrieval will not help. |
+| **Never shown** | The lesson was sitting there and never surfaced. | Retrieval is exactly the fix — a better trigger, or an agent told to ask. |
 
-Most guards in this codebase exist because something specific broke. The comment beside a
-guard says which failure it prevents, because a guard whose reason is forgotten gets
-removed by the next person who finds it inconvenient. If you are reading a condition that
-looks paranoid, the comment tells you what happened.
+Reported as a single "how often did it repeat" number, those two are indistinguishable
+and the number cannot guide anything. Split apart, it becomes a work queue. On the
+memory Recall was extracted from, **23 of 28 measurable repeats had never surfaced at
+all** — so most of what looked like a memory problem was a delivery problem, and
+delivery is the fixable kind.
 
-A few that shaped the design:
+The tool is equally clear about what it cannot see. A recurrence written as a bare
+counter has no date, so it cannot be placed against the moment a lesson fired, and it
+prints that bucket as loudly as the measured ones. Recall gates the recording rule at
+commit time to keep that bucket shrinking.
 
-- The drain measured "did this get done?" by whether the worker deleted its own marker.
-  A worker that did the job correctly and declined the bookkeeping was recorded as failed,
-  retried, and quarantined. 60 sessions went missing into a directory nothing counted.
-  Progress is now derived from what the dispatcher observes — exit code, kill status.
-- The oversize gate parked large transcripts in a tier with no consumer. Because transcript
-  size tracks session length, it was collecting the *longest working sessions* — the best
-  material in the queue. A gate must hand overflow to a reduced path, not a dead end.
-- The test suite drove the real hook, which logged to the real signal log. 45% of the
-  retrieval evidence was fixtures, and the published baseline was wrong in both directions.
-  Every durable write path now takes an env override and the suite asserts it did not move.
+**What no version of this proves is causation.** A lesson that appeared, followed by a
+failure that did not repeat, is encouraging rather than conclusive — the situation may
+simply not have come back. Settling it would take a holdout arm, and Recall does not
+run one. It tells you what it knows, marks the edge of that, and leaves the inference
+to you.
+
+## Worth knowing before you install
+
+- **Push reaches literals; pull reaches everything.** An entry whose triggers are
+  conceptual rather than literal will not auto-inject, which is precisely why `recall`
+  exists and why your agent is told to run it.
+- **Distillation costs tokens.** A headless agent per session, bounded by a wall-clock
+  budget and a per-session timeout, and idle-cheap — but real.
+- **It compounds whatever you actually do.** A memory built from careful work is a
+  memory of careful lessons. The reverse is also true.
+
+## Every guard carries its receipt
+
+Read any condition in this codebase that looks paranoid and the comment beside it will
+tell you which specific failure it prevents. That is deliberate: a guard whose reason has
+been forgotten gets deleted by the next person who finds it inconvenient, so the reason
+lives next to the code rather than in someone's memory.
+
+Three that shaped the design:
+
+- **Progress is now a fact the system observes, not a favour the worker does.** The drain
+  once measured "did this get done?" by whether the worker deleted its own marker — so a
+  worker that did the job and skipped the bookkeeping was recorded as failed, retried, and
+  quarantined. Exit code and kill status replaced it.
+- **A gate hands overflow to a reduced path, never a dead end.** The oversize gate parked
+  large transcripts in a tier with no consumer. Transcript size tracks session length, so
+  it was quietly collecting the longest working sessions — the best material in the queue.
+- **Every durable write path takes an env override, and the suite asserts it.** The tests
+  once drove the real hook into the real signal log, which made 45% of the published
+  retrieval evidence its own fixtures.
 
 ## Tests
 
@@ -265,24 +280,27 @@ A few that shaped the design:
 python3 -m tests.run    # or: for t in tests/test_*.py; do python3 "$t"; done
 ```
 
-Nine suites. They assert behaviour that matters rather than coverage: that a correct no-op is
-distinguishable from a failure, that housekeeping runs on the idle path, that a test cannot
-write to production state, and that an entry written in prose is still retrievable.
+Nine suites, written to assert behaviour rather than chase coverage: that a correct
+no-op stays distinguishable from a failure, that housekeeping still runs on the idle
+path, that a test cannot reach production state, and that an entry written in plain
+prose is still retrievable.
 
-`test_measure_prevention` is the newest and the one most worth reading, because the thing it
-guards is a conclusion rather than a crash. If a fire logged AFTER a repeat were counted as
-having preceded it, every delivery failure would be relabelled a heeding failure, and the
-tool would send you to rewrite entries that were never shown to anyone. Nothing would look
-broken. So the suite asserts the ordering directly, and asserts that fixture rows never count
-as real delivery — this project once published a retrieval baseline where 45% of the evidence
-was its own test data.
+Two are worth reading if you want the shape of the project.
 
-One of them, `test_ships_what_it_invokes`, exists because an earlier cut of this repo
-shipped every part of the loop except the skill the drain invokes, and five green suites
-said nothing — the drain suite replaces the agent with a stub, so the stub stood exactly
-where the missing piece belonged. It now checks statically that every slash command and
-sibling script the shipped code names resolves inside the repo. Gate on the exit code,
-not on a fixture total.
+`test_measure_prevention` guards a **conclusion** rather than a crash. If a fire logged
+*after* a repeat were ever counted as having preceded it, every delivery failure would
+be relabelled a heeding failure and the tool would send you off to rewrite entries
+nobody was ever shown — with nothing appearing broken. So the ordering is asserted
+directly, and fixture rows are proven never to count as real delivery.
+
+`test_ships_what_it_invokes` checks statically that every slash command and sibling
+script the shipped code names actually resolves inside the repo. An earlier cut shipped
+the whole loop except the skill the drain invokes, and five green suites said nothing,
+because the drain suite replaces the agent with a stub — and the stub stood exactly
+where the missing piece belonged.
+
+Each suite carries negative controls, so a check that has quietly stopped checking
+anything fails loudly. Gate on the exit code, not on a fixture total.
 
 ## License
 
