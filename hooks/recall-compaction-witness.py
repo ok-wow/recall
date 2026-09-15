@@ -68,9 +68,14 @@ def main() -> int:
     except Exception:
         payload = {}
 
-    # The docs describe matcher: "auto"|"manual" in settings. Whether the same
-    # word reaches stdin is undocumented, so read whatever is there and record
-    # "unknown" rather than asserting a trigger we cannot see.
+    # VERIFIED 2026-09-15, first real firing: stdin DOES carry `trigger`, with
+    # the same vocabulary the settings matcher uses. A user-typed /compact wrote
+    # {"trigger":"manual"}. So the field is real and the fallback chain below is
+    # belt-and-braces, not the expected path. Still unobserved: an `"auto"`
+    # record -- automatic compaction has not fired since the witness was
+    # installed, so the value that actually matters is the one never yet seen.
+    # Keep the "unknown" default: a missing field must not become a false
+    # "auto", which would silently inflate exactly the count this exists to make.
     trigger = payload.get("trigger") or payload.get("matcher") or "unknown"
     session = payload.get("session_id") or "unknown"
 
