@@ -1,0 +1,47 @@
+# What a connector record is asked before it may enter the index.
+#
+# ── The four-axis version was built, measured, and REJECTED (2026-09-21) ──
+#
+# The design was four independent questions — is this ours, is it a decision,
+# is it durable, is it personal — with the privacy one as a hard exclusion.
+# Measured over 21 labelled records, the four axes correlated at r = +0.774 to
+# +0.922 with each other. They were not four questions; they were one question
+# asked four ways.
+#
+# The privacy axis came out INVERTED. Ordinary work records averaged 0.215 on
+# "is this about a person's private life"; records that genuinely were about
+# someone's health, contract or compensation averaged 0.092. Work scored 2.3x
+# higher on the privacy question than private material did.
+#
+# The cause is what Jev IS. It is a reranker: it scores how strongly a document
+# matches a query's subject matter, not whether a proposition about the document
+# holds. Every one of the four questions described "substantive okWOW content",
+# so all four collapsed onto salience — and the privacy question, pointed at the
+# least substantive records in the set, ranked them lowest.
+#
+# Two things follow, and both are load-bearing:
+#   1. Do not ask this model a yes/no question about a record. Ask it to RANK
+#      records against one subject, which is the thing it does.
+#   2. A privacy gate cannot be a model score. It belongs in the collector as a
+#      deterministic rule plus a person, and it is NOT configured here — a
+#      privacy control that lives in a tunable threshold is not a control.
+#
+# ── What shipped instead ──
+#
+# One axis, used as a FLOOR for auto-drop and nothing more. On the same labelled
+# set this removed 11 of 14 junk records with zero real records lost. The 2
+# survivors were AI-engineering newsletters, which are topically adjacent to
+# okWOW's own work and score high for a defensible reason. Everything above the
+# floor goes to the collector to judge; the floor only buys back the obvious.
+version: 2
+review_margin: 0.05
+
+axes:
+  - id: substance
+    role: require
+    min: 0.09          # measured: 11/14 junk dropped, 0/13 real records lost
+    question: >
+      Is this a record of okWOW's own work — a decision, a commitment, an
+      unresolved problem, or a named obligation? Vendor marketing, newsletters,
+      industry commentary, receipts and automated notifications are not, even
+      when the subject matter is close to what okWOW builds.

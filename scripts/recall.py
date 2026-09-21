@@ -15,6 +15,9 @@ precision can be looser than the injector's without teaching anyone to ignore a
 channel. The precise literal matcher stays exactly as it is for auto-injection.
 
     recall.py "worktree node_modules symlink"   # ranked search
+    recall.py --specs "clarification form"      # the spec corpus only
+    recall.py --hub "prototype"                 # the published hub, with URLs
+    recall.py --connectors "pricing"            # Slack / Gmail / meeting pointers
     recall.py --id <entry-id>                   # one entry in full
     recall.py --recurring                       # lessons that repeated anyway
     recall.py --unreachable                     # entries auto-injection cannot see
@@ -76,6 +79,19 @@ PROBE_INDEX = env_path("RECALL_PROBE_INDEX", "OKWOW_PROBE_INDEX",
 # produces a number that cannot drive a decision.
 SURFACED_LOG = env_path("RECALL_SURFACED_LOG", "OKWOW_PROBE_SURFACED_LOG",
                         RECALL_HOME / "surfaced.jsonl")
+# The specs corpus. Its index is already built and already gated -- see
+# load_specs -- and until 2026-09-21 it was read by nothing.
+SPECS_INDEX = env_path("RECALL_SPECS_INDEX", "OKWOW_SPECS_INDEX",
+                       Path.home() / "dev/specs/llms.txt")
+# The published hub -- specs, plans, playbooks, prototypes, strategy, pulse.
+# Also an index that already existed and was read by nothing. See load_hub.
+HUB_INDEX = env_path("RECALL_HUB_INDEX", "OKWOW_HUB_INDEX",
+                     Path.home() / "dev/briefings/site/_index.json")
+HUB_BASE = os.environ.get("RECALL_HUB_BASE") or "https://internal.okwow.ai"
+# Pointers into Slack, Gmail, meetings -- written by connector_index.py, which
+# refuses anything longer than a gist. See load_connectors.
+CONNECTOR_DIR = env_path("RECALL_CONNECTOR_DIR", "OKWOW_CONNECTOR_DIR",
+                         RECALL_HOME / "connectors")
 
 WORD = re.compile(r"[a-z0-9][a-z0-9._/-]*", re.I)
 # Ordinary English that carries no retrieval signal. Deliberately short: BM25's
@@ -183,6 +199,9 @@ def load_entries() -> list[dict]:
                 "probe_when": pw if isinstance(pw, list) else ([pw] if pw else []),
             })
     entries.extend(load_rules(broken))
+    entries.extend(load_specs(broken))
+    entries.extend(load_hub(broken))
+    entries.extend(load_connectors(broken))
     load_entries.broken = broken
     load_entries.parsed = parsed
     return entries
@@ -231,6 +250,223 @@ def load_rules(broken: list[dict]) -> list[dict]:
                 "recurrences": 0, "raw": r, "text": "\n".join(parts),
                 "probe_when": [], "is_rule": True, "skill": skill,
             })
+    return out
+
+
+# One line per spec in llms.txt:
+#   - [Title](./slug/spec.md): workspace · type · status · updated DATE · tldr ([preview](url))
+SPEC_LINE = re.compile(r"^- \[(?P<title>.+?)\]\((?P<path>\.[^)]+)\):\s*(?P<meta>.+)$")
+SPEC_PREVIEW = re.compile(r"\s*\(\[preview\]\([^)]*\)\)\s*$")
+SPEC_TITLE_SUFFIX = re.compile(r"\s*·\s*spec$", re.I)
+# The one element of the metadata chain with a fixed shape. See load_specs.
+SPEC_UPDATED = re.compile(r"\s·\supdated\s(\d{4}-\d{2}-\d{2})\s·\s")
+
+
+def load_specs(broken: list[dict]) -> list[dict]:
+    """Index the spec corpus from ~/dev/specs/llms.txt.
+
+    The catalogs answer "what went wrong before". Nothing answered "what does
+    this product do" or "what did we already decide about X": on 2026-09-21
+    all 197 spec folders sat outside every retrieval path, so a session had no
+    route to them and re-derived what a spec had already settled. The count is
+    read from the file on every run and only grows -- nothing here is sized to
+    a snapshot of it.
+
+    llms.txt and not the 197 spec.md bodies, for three reasons. It is already
+    the distilled form -- slug, type, status, updated, tldr. It is regenerated
+    by specs/_scripts/build-llms-txt.mjs, and a pre-commit check refuses a
+    commit where it has drifted from the specs on disk, so it cannot go stale
+    behind a committed spec. And the bodies are ~2 MB of design prose, which is
+    not something to push through a BM25 pass that runs inside a hook.
+
+    Specs carry no probe_when and are not in the injection index, so --stats
+    counts them separately for the same reason it separates rules: folding them
+    in would move a tracked percentage without anything becoming less reachable.
+    """
+    if not SPECS_INDEX.exists():
+        return []
+    try:
+        text = SPECS_INDEX.read_text()
+    except Exception as exc:
+        first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+        broken.append({"catalog": "SPEC", "path": str(SPECS_INDEX), "error": first})
+        return []
+    out, section = [], ""
+    for line in text.splitlines():
+        if line.startswith("## "):
+            section = line[3:].strip()
+            continue
+        m = SPEC_LINE.match(line)
+        if not m:
+            continue
+        slug = m.group("path").strip("./").split("/")[0]
+        if not slug:
+            continue
+        meta = SPEC_PREVIEW.sub("", m.group("meta"))
+        # Anchor on `· updated <date> ·`; do not count fields from the left.
+        # The chain is workspace · type… · status, and how many type segments
+        # it carries VARIES -- 13 of 159 lines carried an extra one on
+        # 2026-09-21. A positional read shifted every one of those by a field,
+        # so the body printed "updated 2026-05-28 · …" and the first clause of
+        # the actual tldr was thrown away. The date is the only element with a
+        # fixed shape, which makes it the only thing safe to anchor on, and the
+        # corpus is a growing file written by a generator that will keep
+        # gaining fields.
+        u = SPEC_UPDATED.search(meta)
+        if u:
+            head, updated, tldr = meta[:u.start()], f"updated {u.group(1)}", meta[u.end():]
+        else:
+            # Keep the spec, lose only its metadata. Dropping the line would
+            # make a format change look like a spec that does not exist.
+            head, updated, tldr = "", "", meta
+        chain = [b.strip() for b in head.split(" · ") if b.strip()]
+        status = chain[-1] if len(chain) > 1 else ""
+        doc_type = " · ".join(chain[1:-1]) if len(chain) > 2 else ""
+        title = SPEC_TITLE_SUFFIX.sub("", m.group("title")).strip()
+        out.append({
+            "key": f"SPEC:{slug}", "id": slug, "catalog": "SPEC",
+            "recurrences": 0, "probe_when": [], "is_spec": True,
+            "raw": {"id": slug, "title": title, "summary": tldr,
+                    "spec_status": status, "doc_type": doc_type,
+                    "updated": updated, "section": section,
+                    "spec_path": str(SPECS_INDEX.parent / slug / "spec.md")},
+            # The slug is indexed twice, once literally and once with its
+            # hyphens opened out, because "the clarification form spec" and
+            # `clarification-form-keyboard-ux` should both find it by name.
+            "text": "\n".join([slug, slug.replace("-", " "), title, tldr,
+                               doc_type, status, section]),
+        })
+    # The file exists and its shape is gated, so zero parsed lines means the
+    # generator changed its format -- not that there are no specs. Staying
+    # silent there would read exactly like an empty spec corpus.
+    if not out:
+        broken.append({"catalog": "SPEC", "path": str(SPECS_INDEX),
+                       "error": "no spec lines matched the expected format"})
+    return out
+
+
+def load_hub(broken: list[dict]) -> list[dict]:
+    """Index the published hub from briefings/site/_index.json.
+
+    The hub is where a spec, plan, playbook or prototype becomes something a
+    person can OPEN -- which is exactly what a session needs to hand someone,
+    and exactly what it could not find. Its generator already writes a
+    machine-readable index (schema okwow-hub-index-v1, two buckets: `specs` and
+    `artifacts`), and on 2026-09-21 nothing read it either: 91 entries, 0
+    retrievable.
+
+    Overlaps `load_specs` on purpose. They answer different questions -- the
+    spec corpus answers "what did we decide", the hub answers "what can I send
+    someone" -- and a published spec carries a URL its working copy does not.
+    Deduping them would lose the URL, which is the reason to index the hub.
+    """
+    if not HUB_INDEX.exists():
+        return []
+    try:
+        data = json.loads(HUB_INDEX.read_text())
+    except Exception as exc:
+        first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+        broken.append({"catalog": "HUB", "path": str(HUB_INDEX), "error": first})
+        return []
+    out = []
+    # Read every list the file carries rather than the two bucket names known
+    # today: the generator owns this schema and will add buckets. A hardcoded
+    # ("specs", "artifacts") silently drops whatever it names next.
+    buckets = [v for v in data.values() if isinstance(v, list)] if isinstance(data, dict) else [data]
+    for bucket in buckets:
+        for i in bucket:
+            if not isinstance(i, dict):
+                continue
+            href = str(i.get("href") or "").strip()
+            slug = str(i.get("slug") or "").strip() or href.strip("/").split("/")[-1]
+            if not slug:
+                continue
+            # The first path segment is the hub section -- specs, plans,
+            # playbooks, prototypes -- and it is what a reader is filtering by
+            # when they ask for "the playbooks".
+            section = href.strip("/").split("/")[0] if "/" in href.strip("/") else ""
+            body = str(i.get("tldr") or i.get("description") or "").strip()
+            title = str(i.get("title") or "").strip()
+            out.append({
+                "key": f"HUB:{section}/{slug}" if section else f"HUB:{slug}",
+                "id": slug, "catalog": "HUB", "recurrences": 0,
+                "probe_when": [], "is_hub": True,
+                "raw": {"id": slug, "title": title, "summary": body or title,
+                        "spec_status": str(i.get("status") or "").strip(),
+                        "doc_type": section,
+                        "updated": str(i.get("updatedAt") or "").strip()[:10],
+                        "spec_path": f"{HUB_BASE}/{href.lstrip('/')}" if href else ""},
+                "text": "\n".join([slug, slug.replace("-", " "), title, body,
+                                   section, str(i.get("track") or "")]),
+            })
+    if not out:
+        broken.append({"catalog": "HUB", "path": str(HUB_INDEX),
+                       "error": "no entries matched the expected shape"})
+    return out
+
+
+def load_connectors(broken: list[dict]) -> list[dict]:
+    """Index the connector pointers under $RECALL_HOME/connectors/*.jsonl.
+
+    Measured 2026-09-21, against a live Slack search: a connector tool call and
+    a local query cost about the same per lookup (~700 tokens vs ~582). The
+    index is not here to be cheaper. It is here for the two things a tool call
+    structurally cannot do.
+
+    First, a tool call requires knowing WHICH app to search, and the whole
+    reason the corpus went unread is that nobody knew where to look -- the
+    connector question had been answered in `core-world-model` four months
+    earlier. Ranking every source in one list removes that decision. Second,
+    Slack's search is lexical-only on this account (the tool says so), which is
+    the same blind spot that leaves 43% of the catalog unreachable; indexed
+    locally, a thread gets BM25 with token-splitting and the Jev rerank.
+
+    Bodies are deliberately absent -- connector_index.py refuses them -- so a
+    hit here is a pointer. Read the gist, then fetch the body through the
+    connector if it turns out to matter.
+    """
+    if not CONNECTOR_DIR.exists():
+        return []
+    out = []
+    for f in sorted(CONNECTOR_DIR.glob("*.jsonl")):
+        source = f.stem
+        try:
+            lines = f.read_text().splitlines()
+        except Exception as exc:
+            first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+            broken.append({"catalog": source.upper(), "path": str(f), "error": first})
+            continue
+        bad = 0
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except Exception:
+                bad += 1                       # one crashed write, not a dead source
+                continue
+            if not isinstance(r, dict) or not r.get("id"):
+                bad += 1
+                continue
+            people = r.get("people") if isinstance(r.get("people"), list) else []
+            title, gist = str(r.get("title") or ""), str(r.get("gist") or "")
+            out.append({
+                "key": f"{source.upper()}:{r['id']}", "id": r["id"],
+                "catalog": source.upper(), "recurrences": 0, "probe_when": [],
+                "is_connector": True,
+                "raw": {"id": r["id"], "title": title, "summary": gist or title,
+                        "spec_status": str(r.get("where") or ""),
+                        "doc_type": source, "updated": str(r.get("date") or "")[:10],
+                        "spec_path": str(r.get("url") or "")},
+                # People are indexed: "what did Zachary say about X" is the
+                # question a thread index answers and a spec index cannot.
+                "text": "\n".join([title, gist, " ".join(str(p) for p in people),
+                                   str(r.get("where") or ""), source]),
+            })
+        if bad:
+            broken.append({"catalog": source.upper(), "path": str(f),
+                           "error": f"{bad} unreadable line(s) skipped"})
     return out
 
 
@@ -370,6 +606,14 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None,
     body = _first(r, DISPLAY_BODY) or _longest_unknown(r) or ""
     body = " ".join(str(body).split())
     print("  " + (body if full else body[:BODY_CAP] + ("…" if len(body) > BODY_CAP else "")))
+    if e.get("is_spec") or e.get("is_hub") or e.get("is_connector"):
+        # A spec has no fix. Its state and its path are what a reader needs
+        # next, and the path is the whole point of retrieving it.
+        meta = " · ".join(x for x in (r.get("doc_type"), r.get("spec_status"),
+                                      r.get("updated")) if x)
+        if meta:
+            print(f"  {meta}")
+        print(f"  {r.get('spec_path', '')}")
     fix = _first(r, DISPLAY_FIX)
     if fix:
         fix = " ".join(str(fix).split())
@@ -585,7 +829,9 @@ def truncated_fixes(entries: list[dict]) -> list[dict]:
         # Rules never reach the push channel -- they arrive when their skill
         # fires, uncut -- so measuring them against push's cap counts a
         # truncation that cannot happen. Left in and the number moves by 9.
-        if e.get("is_rule"):
+        # Specs never reach it either, and for the same reason.
+        if e.get("is_rule") or e.get("is_spec") or e.get("is_hub") \
+                or e.get("is_connector"):
             continue
         raw = e["raw"]
         parts = [("what to do", push.remedy(raw)), ("body", push.summarize(raw))]
@@ -719,10 +965,22 @@ def main() -> int:
                     help="reorder results by judged relevance (needs AI_GATEWAY_API_KEY)")
     ap.add_argument("--no-abstain", action="store_true",
                     help="with --rerank, show the results even when none beat the control")
+    ap.add_argument("--specs", action="store_true",
+                    help="search only the spec corpus, not the failure catalogs")
+    ap.add_argument("--hub", action="store_true",
+                    help="search only the published hub (specs, plans, playbooks, prototypes)")
+    ap.add_argument("--connectors", action="store_true",
+                    help="search only connector pointers (Slack, Gmail, meetings)")
     ap.add_argument("--stats", action="store_true")
     a = ap.parse_args()
 
     entries = load_entries()
+    if a.specs:
+        entries = [e for e in entries if e.get("is_spec")]
+    if a.hub:
+        entries = [e for e in entries if e.get("is_hub")]
+    if a.connectors:
+        entries = [e for e in entries if e.get("is_connector")]
     for b in getattr(load_entries, "broken", []):
         sys.stderr.write(
             f"recall: {b['catalog']} catalog did not parse and is EXCLUDED from these "
@@ -740,14 +998,22 @@ def main() -> int:
         # Rules are not in the injection index by design -- they arrive when
         # their skill fires -- so scoring them here would move a tracked
         # percentage without anything becoming less reachable.
-        cat = [e for e in entries if not e.get("is_rule")]
+        cat = [e for e in entries if not e.get("is_rule")
+               and not e.get("is_spec") and not e.get("is_hub")
+               and not e.get("is_connector")]
         rules = [e for e in entries if e.get("is_rule")]
+        specs = [e for e in entries if e.get("is_spec")]
         unreachable = [e for e in cat if e["key"] not in idx]
         noprobe = [e for e in unreachable if not e["probe_when"]]
         out = {
             "entries": len(entries),
             "catalog_entries": len(cat),
             "rules_entries": len(rules),
+            "spec_entries": len(specs),
+            "hub_entries": sum(1 for e in entries if e.get("is_hub")),
+            "connector_entries": sum(1 for e in entries if e.get("is_connector")),
+            "connector_sources": sorted({e["catalog"] for e in entries
+                                         if e.get("is_connector")}),
             "by_catalog": dict(Counter(e["catalog"] for e in entries)),
             "recurring": sum(1 for e in entries if e["recurrences"]),
             "recurrence_events": sum(e["recurrences"] for e in entries),
@@ -850,7 +1116,12 @@ def main() -> int:
         sel = sorted([e for e in entries if e["recurrences"]], key=lambda e: -e["recurrences"])[:a.limit]
     elif a.unreachable:
         idx = indexed_keys()
-        sel = [e for e in entries if e["key"] not in idx][:a.limit]
+        # Specs are unreachable by injection by design -- no probe_when, and
+        # none is wanted -- so listing them here would bury the entries this
+        # mode exists to surface under a growing pile working as intended.
+        sel = [e for e in entries
+               if not e.get("is_spec") and not e.get("is_hub")
+               and not e.get("is_connector") and e["key"] not in idx][:a.limit]
     elif a.stubs:
         # An id with no body AND no fix is indistinguishable from a covered
         # lesson in every count, and cannot be acted on by anyone. The id still
