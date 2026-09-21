@@ -16,8 +16,11 @@ Three things this module will not do, each for a measured reason:
 2. **It never applies a threshold.** Jev's ordering is the trustworthy part;
    its absolute numbers are not calibrated, and the same candidates under a
    thinner context string have been measured moving a score from 0.96 to 0.72.
-   So this reorders and returns the scores. Deciding that 0.23 means "drop it"
-   needs a calibration set, and eleven hand labels is not one.
+   So this reorders and returns the scores, and 0.23 means nothing here.
+   recall.py does decide when to drop everything, and it does it the only way
+   these numbers support: by sending a deliberately useless candidate in the
+   same request and comparing against that. Same call, same question, same
+   scale. The calibration lives with the comparison, not in this file.
 3. **It never fails a query.** Every failure raises `Unavailable`, and the
    caller keeps BM25's order. A retrieval tool that returns nothing because a
    network call timed out is worse than one that returns a rougher ranking.
