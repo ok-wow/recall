@@ -29,7 +29,8 @@ import build_probe_index as push  # noqa: E402
 # Both the fixtures and the assertions read the LIVE cap. Sizing a fixture to
 # cross a hardcoded threshold means the day the threshold moves, the fixture
 # stops crossing it, the behaviour never fires, and four green checks turn red
-# for a reason that has nothing to do with the behaviour
+# for a reason that has nothing to do with the behaviour. That is exactly what
+# happened here when the cap went 400 -> 1200
 # (FAILURE_MODES: config-limit-raise-breaks-tests-with-fixture-sized-to-old-limit).
 CAP = push.PUSH_CAP
 PAD = "word " * (CAP // 5 + 10)         # comfortably over the cap, whatever it is

@@ -85,6 +85,26 @@ def answers(scores: dict[str, float]) -> dict:
     return {"answers": {n: {"noul": v} for n, v in scores.items()}}
 
 
+# recall.py rides a deliberately useless candidate along in the same call and
+# abstains when nothing beats it. Matched by text rather than by importing the
+# constant: recall resolves its catalog dir at import time, and these cases run
+# it as a subprocess on purpose.
+CONTROL_MARK = "open that file and look at what it contains"
+
+
+def policy(real, control: float = 0.05):
+    """Score each real lesson with `real(text)`, and the control with `control`."""
+    def answer(body, n):
+        return 200, answers({l["id"]: (control if CONTROL_MARK in l["text"]
+                                       else real(l["text"]))
+                             for l in body["state"]["lessons"]})
+    return answer
+
+
+def has_control(body) -> bool:
+    return any(CONTROL_MARK in l["text"] for l in body["state"]["lessons"])
+
+
 def catalog_dir() -> Path:
     d = Path(tempfile.mkdtemp(prefix="recalljev-"))
     import yaml
@@ -144,10 +164,7 @@ def main() -> int:
 
     # 2. The judge reorders. BM25 puts alpha first for this query; scoring beta
     #    higher must invert the printed order.
-    def invert(body, n):
-        ids = [l["id"] for l in body["state"]["lessons"]]
-        texts = {l["id"]: l["text"] for l in body["state"]["lessons"]}
-        return 200, answers({i: (0.9 if "beta" in texts[i] else 0.1) for i in ids})
+    invert = policy(lambda t: 0.9 if "beta" in t else 0.1)
 
     with Gateway(invert) as g:
         rc, out = run(d, query, "--rerank", url=g.url)
@@ -159,8 +176,12 @@ def main() -> int:
               g.requests[0]["auth"] == "Bearer test-key", g.requests[0]["auth"][:12])
         sent = g.requests[0]["body"]
         check("one question per lesson",
-              len(sent["questions"]) == len(sent["state"]["lessons"]) == 2,
+              len(sent["questions"]) == len(sent["state"]["lessons"]) == 3,
               f"{len(sent['questions'])} q / {len(sent['state']['lessons'])} lessons")
+        check("the control rides in the same call, not a second one",
+              has_control(sent) and len(g.requests) == 1)
+        check("the control is never shown as a result",
+              "A project keeps some of its files" not in out, out[:200])
         check("every question asks for a noul",
               all(q["type"] == "noul" for q in sent["questions"].values()))
         check("the query is the question asked",
@@ -168,8 +189,7 @@ def main() -> int:
         check("judged score is shown", "judged 0.9" in out, out[:200])
 
     # 3. Ties keep the search order rather than shuffling it.
-    with Gateway(lambda b, n: (200, answers(
-            {l["id"]: 0.5 for l in b["state"]["lessons"]}))) as g:
+    with Gateway(policy(lambda t: 0.5)) as g:
         rc, plain = run(d, query, url=g.url)
         rc, tied = run(d, query, "--rerank", url=g.url)
         check("equal scores preserve search order", order(plain) == order(tied),
@@ -215,8 +235,7 @@ def main() -> int:
 
     # 8. The log carries the judged score only when there is one.
     plain_log, judged_log = d / "plain.jsonl", d / "judged.jsonl"
-    with Gateway(lambda b, n: (200, answers(
-            {l["id"]: 0.4 for l in b["state"]["lessons"]}))) as g:
+    with Gateway(policy(lambda t: 0.4)) as g:
         run(d, query, url=g.url, log=plain_log)
         run(d, query, "--rerank", url=g.url, log=judged_log)
     plain_rows = [json.loads(l) for l in plain_log.read_text().splitlines()]
@@ -245,6 +264,82 @@ def main() -> int:
         check("--json reports the judged score",
               rows and "jev" in rows[0] and rows[0]["id"].startswith("beta-retry"),
               str(rows[:1])[:160])
+
+    # 11. Abstention. Pull's other half already refuses to answer -- the push
+    #     index carries three score floors -- while this side had none, so a
+    #     nonsense question still came back with a confident top hit. The floor
+    #     here is a comparison, because the absolute numbers are the part this
+    #     project measured and does not trust.
+    nothing_clears = policy(lambda t: 0.04)          # both real lessons under 0.05
+    with Gateway(nothing_clears) as g:
+        rc, out = run(d, query, "--rerank", url=g.url)
+        check("nothing beats the control -> no results", rc == 0 and not order(out),
+              f"order={order(out)}")
+        check("abstention says so in words", "no lesson here answers that" in out, out[:200])
+        check("abstention names the way out", "--no-abstain" in out, out[:200])
+
+    # A tie with the control is not an answer either. A lesson that merely
+    # matches something content-free has told the reader nothing.
+    with Gateway(policy(lambda t: 0.05)) as g:
+        rc, out = run(d, query, "--rerank", url=g.url)
+        check("a tie with the control abstains", rc == 0 and not order(out),
+              f"order={order(out)}")
+
+    # The case the live measurement turned on: a lesson that BEATS the control
+    # but only just. On a question the corpus cannot answer, every score
+    # collapses to within about 0.03 of every other -- so "higher than the
+    # control" alone would have shown junk on 6 of 11 nonsense questions.
+    with Gateway(policy(lambda t: 0.12)) as g:      # control 0.05, gap 0.07
+        rc, out = run(d, query, "--rerank", url=g.url)
+        check("edging past the control is not an answer",
+              rc == 0 and not order(out), f"order={order(out)}")
+
+    with Gateway(policy(lambda t: 0.12)) as g:
+        rc, out = run(d, query, "--rerank", url=g.url,
+                      extra={"RECALL_ABSTAIN_MARGIN": "0.01"})
+        check("the margin is tunable", rc == 0 and order(out), f"order={order(out)}")
+
+    # 12. --no-abstain reads them anyway, and pays for no control slot.
+    with Gateway(nothing_clears) as g:
+        rc, out = run(d, query, "--rerank", "--no-abstain", url=g.url)
+        check("--no-abstain shows the results", rc == 0 and order(out), f"order={order(out)}")
+        check("--no-abstain sends no control",
+              not has_control(g.requests[0]["body"])
+              and len(g.requests[0]["body"]["state"]["lessons"]) == 2,
+              str(len(g.requests[0]["body"]["state"]["lessons"])))
+
+    # 13. An abstention logs nothing as surfaced -- because nothing was -- but
+    #     leaves a countable row. A query answered with silence and a query
+    #     nobody ran must not look the same to the coverage metric.
+    abstain_log = d / "abstained.jsonl"
+    with Gateway(nothing_clears) as g:
+        run(d, query, "--rerank", url=g.url, log=abstain_log)
+    rows = [json.loads(l) for l in abstain_log.read_text().splitlines()]
+    check("an abstention surfaces no entry",
+          all("entry" not in r for r in rows), str(rows[:2])[:160])
+    check("an abstention is still recorded",
+          len(rows) == 1 and rows[0]["event"] == "recall-abstain"
+          and rows[0]["judged"] == 2, str(rows[:1])[:160])
+    # ...and something reads that row. A gate whose only output goes somewhere
+    # nobody looks cannot be checked by the person relying on it.
+    with Gateway(invert) as g:
+        run(d, query, "--rerank", url=g.url, log=abstain_log)
+    rc, out = run(d, "--stats", "--json", log=abstain_log)
+    st = json.loads(out)
+    check("--stats counts abstentions against pulls",
+          st.get("pulls_answered") == 1 and st.get("pulls_abstained") == 1
+          and st.get("abstained_pct") == 50.0, str(st)[-120:])
+
+    # 14. --json abstains to an empty list, not to a confident wrong answer.
+    with Gateway(nothing_clears) as g:
+        rc, out = run(d, query, "--rerank", "--json", url=g.url)
+        check("--json abstains to []", rc == 0 and json.loads(out) == [], out[:160])
+
+    # 15. Without --rerank there is no judge, so there is no abstention: the
+    #     query keeps answering in search order exactly as it always did.
+    with Gateway(nothing_clears) as g:
+        rc, out = run(d, query, url=g.url)
+        check("no judge, no abstention", rc == 0 and order(out), f"order={order(out)}")
 
     print()
     if fails:
