@@ -179,7 +179,43 @@ python3 ~/recall/scripts/measure_prevention.py --gaps   # lessons that never sur
 
 # what has been learned, and how much of it can be recalled
 python3 ~/recall/scripts/recall.py --stats
+
+# ask again, and let a judgment model put the best answer first
+python3 ~/recall/scripts/recall.py --rerank "an approval that came from a bot"
 ```
+
+### `--rerank` — when search order is the wrong order
+
+Search finds; it does not judge. Measured over one session's 26 real queries
+(2026-09-21): the top result scored **0.56** mean relevance, while **65%** of
+those queries already held a clearly relevant lesson somewhere in the top three.
+The answer was usually present and sitting under something worse.
+
+`--rerank` sends the top ten candidates to a judgment model in one call and
+reorders them by how well each actually answers the question. It is **off unless
+you ask for it**, needs `AI_GATEWAY_API_KEY`, and costs about a second.
+
+```
+an-approved-reviewdecision-can-be-a-bot-not-a-person  ×2
+  [FM]  judged 0.94  score 32.0  matched: approved, bot, person, pull, request
+```
+
+Both numbers are printed because they answer different questions: `score` says
+why the entry was fetched at all, `judged` says why it is in this position.
+
+Three deliberate limits:
+
+- **It never fails your query.** No key, a timeout, a busy gateway — you get a
+  note on stderr and the ordinary search order. A rougher ranking beats no answer.
+- **It applies no threshold.** The ordering is the trustworthy part; the absolute
+  numbers are not calibrated, and the same lessons under a differently worded
+  prompt have been measured moving a score from 0.96 to 0.72. Nothing is dropped
+  for scoring low.
+- **It judges more than it shows.** Ten candidates for five results, because in
+  the measurement the lesson that mattered most for one situation sat at search
+  rank nine.
+
+Set `RECALL_RERANK=1` to turn it on for a whole session without passing the flag.
 
 Worth one line in your shell profile if you use it by hand:
 
@@ -198,6 +234,10 @@ Every path resolves through an environment variable with a default. No absolute 
 |---|---|---|
 | `RECALL_HOME` | `~/.recall` | all mutable state |
 | `RECALL_CATALOG_DIR` | `$RECALL_HOME/catalogs` | the YAML catalogs |
+| `RECALL_RERANK` | unset (off) | `1` turns `--rerank` on for every query |
+| `RECALL_RERANK_POOL` | `10` | candidates sent to the judge per query |
+| `RECALL_JEV_URL` | the Vercel AI Gateway | where the judge lives |
+| `RECALL_JEV_TIMEOUT` | `20` | seconds before the judge is given up on |
 | `RECALL_AGENT_BIN` | `claude` | CLI used for unattended distillation |
 | `RECALL_HOST_DIR` | `~/.claude` | your agent's dir (transcripts, settings) |
 

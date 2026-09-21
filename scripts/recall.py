@@ -247,6 +247,11 @@ DISPLAY_BODY = ("what", "failure", "summary", "symptom", "trigger", "decided",
                 "pattern", "consequence", "observed", "cause", "what_happened")
 DISPLAY_FIX = ("fix_pattern", "fix", "why", "remedy", "rule", "lesson",
                "doctrine", "workaround", "how_to_apply", "correct_behavior")
+# show() truncates here. judge_text() reuses the same two caps deliberately: a
+# ranker should order what the reader will actually see, not a fuller version
+# of it that nobody is shown.
+BODY_CAP = 400
+FIX_CAP = 300
 
 
 def _first(raw: dict, fields: tuple[str, ...]):
@@ -282,22 +287,29 @@ def _push_channel():
 _push_channel.mod = None
 
 
-def show(e: dict, score: float | None = None, hits: list[str] | None = None, full: bool = False) -> None:
+def show(e: dict, score: float | None = None, hits: list[str] | None = None,
+         full: bool = False, judged: float | None = None) -> None:
     r = e["raw"]
     tag = f"  [{e['catalog']}]"
     rec = f"  ×{e['recurrences'] + 1}" if e["recurrences"] else ""
     head = f"{e['id']}{rec}"
-    print(f"\n{head}\n{tag}" + (f"  score {score:.1f}  matched: {', '.join(hits[:6])}" if score is not None else ""))
+    line = f"  score {score:.1f}  matched: {', '.join(hits[:6])}" if score is not None else ""
+    # Both numbers, because they answer different questions: the search score
+    # says why this entry was fetched at all, the judged score says why it is
+    # in this position.
+    if judged is not None:
+        line = f"  judged {judged:.2f}" + line
+    print(f"\n{head}\n{tag}" + line)
     body = _first(r, DISPLAY_BODY) or _longest_unknown(r) or ""
     body = " ".join(str(body).split())
-    print("  " + (body if full else body[:400] + ("…" if len(body) > 400 else "")))
+    print("  " + (body if full else body[:BODY_CAP] + ("…" if len(body) > BODY_CAP else "")))
     fix = _first(r, DISPLAY_FIX)
     if fix:
         fix = " ".join(str(fix).split())
         # A decision has a reason, not a fix. Printing "FIX:" over a rationale
         # tells the reader the wrong thing about what they are looking at.
         label = "WHY" if e["catalog"] == "DE" else "FIX"
-        print(f"  {label}: " + (fix if full else fix[:300] + ("…" if len(fix) > 300 else "")))
+        print(f"  {label}: " + (fix if full else fix[:FIX_CAP] + ("…" if len(fix) > FIX_CAP else "")))
     if full and e["probe_when"]:
         print("  PROBE WHEN:")
         for p in e["probe_when"]:
@@ -385,7 +397,49 @@ def hidden_statements(entries: list[dict]) -> list[dict]:
     return found
 
 
-def log_pull(shown: list, mode: str, query: str = "") -> None:
+def judge_text(e: dict) -> str:
+    """The entry as a ranker sees it: the same body and fix a reader is given."""
+    r = e["raw"]
+    body = " ".join(str(_first(r, DISPLAY_BODY) or _longest_unknown(r) or "").split())
+    fix = " ".join(str(_first(r, DISPLAY_FIX) or "").split())
+    return body[:BODY_CAP] + (" FIX: " + fix[:FIX_CAP] if fix else "")
+
+
+# Judge more than will be shown. Reordering only the five results already on
+# screen can just permute what BM25 liked; in the 2026-09-21 measurement the
+# lesson that mattered most for one situation sat at BM25 rank 9 of 10.
+RERANK_POOL = int(os.environ.get("RECALL_RERANK_POOL") or 10)
+
+
+def rerank(query: str, ranked: list, limit: int) -> tuple[list, dict | None]:
+    """Reorder the top candidates by judged relevance.
+
+    Returns the list unchanged and no scores whenever the judge cannot answer.
+    A rougher ranking is a far better outcome than a query that fails, so every
+    unavailability is a note on stderr and nothing more.
+    """
+    pool = ranked[:max(limit, RERANK_POOL)]
+    if len(pool) < 2:
+        return ranked, None          # nothing to reorder, and no call to pay for
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import jev
+    except ImportError as exc:
+        sys.stderr.write(f"recall: not reranked ({exc}) — showing search order\n")
+        return ranked, None
+    try:
+        scores = jev.score(query, [judge_text(e) for e, _, _ in pool])
+    except jev.Unavailable as exc:
+        sys.stderr.write(f"recall: not reranked ({exc}) — showing search order\n")
+        return ranked, None
+    judged = {e["key"]: sc for (e, _, _), sc in zip(pool, scores)}
+    # sorted() is stable, so lessons the judge scores equally keep the search
+    # order between them instead of being shuffled by an arbitrary tiebreak.
+    pool = sorted(pool, key=lambda t: -judged[t[0]["key"]])
+    return pool + ranked[len(pool):], judged
+
+
+def log_pull(shown: list, mode: str, query: str = "", judged: dict | None = None) -> None:
     """Record entries a PULL actually put in front of someone.
 
     Only need-driven retrieval is logged -- a free-text query and `--id`. The
@@ -406,7 +460,7 @@ def log_pull(shown: list, mode: str, query: str = "") -> None:
         SURFACED_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(SURFACED_LOG, "a", encoding="utf-8") as fh:
             for e, score, hits in shown:
-                fh.write(json.dumps({
+                row = {
                     "ts": ts,
                     "session": session,
                     "event": mode,          # recall-query | recall-id
@@ -414,7 +468,12 @@ def log_pull(shown: list, mode: str, query: str = "") -> None:
                     "score": round(score, 1) if isinstance(score, (int, float)) else None,
                     "tokens": hits,
                     "query": query[:200],
-                }, separators=(",", ":")) + "\n")
+                }
+                # Present only on a reranked pull, and absent rather than null
+                # otherwise, so every row already written keeps its exact shape.
+                if judged and e["key"] in judged:
+                    row["jev"] = round(judged[e["key"]], 3)
+                fh.write(json.dumps(row, separators=(",", ":")) + "\n")
     except Exception:
         pass
 
@@ -432,6 +491,8 @@ def main() -> int:
                     help="statements inside recurrence notes that no channel displays")
     ap.add_argument("--stubs", action="store_true",
                     help="entries with an id and no lesson — they count as covered and help nobody")
+    ap.add_argument("--rerank", action="store_true",
+                    help="reorder results by judged relevance (needs AI_GATEWAY_API_KEY)")
     ap.add_argument("--stats", action="store_true")
     a = ap.parse_args()
 
@@ -536,17 +597,29 @@ def main() -> int:
         sel = [e for e in entries if _empty(e, BODY) and _empty(e, FIX)][:a.limit]
     elif a.query:
         q = " ".join(a.query)
-        ranked = bm25(entries, q)[:a.limit]
-        log_pull(ranked, "recall-query", q)
+        ranked = bm25(entries, q)
+        judged = None
+        # The env var exists so a hook or an agent can turn this on for a whole
+        # session without editing every call site. Off unless asked either way.
+        if a.rerank or (os.environ.get("RECALL_RERANK") or "").strip() not in ("", "0", "false", "no"):
+            ranked, judged = rerank(q, ranked, a.limit)
+        ranked = ranked[:a.limit]
+        log_pull(ranked, "recall-query", q, judged)
         if a.json:
-            print(json.dumps([{"id": e["id"], "catalog": e["catalog"], "score": round(s, 2),
-                               "matched": h, "recurrences": e["recurrences"]} for e, s, h in ranked], indent=2))
+            rows = []
+            for e, s, h in ranked:
+                row = {"id": e["id"], "catalog": e["catalog"], "score": round(s, 2),
+                       "matched": h, "recurrences": e["recurrences"]}
+                if judged and e["key"] in judged:
+                    row["jev"] = round(judged[e["key"]], 3)
+                rows.append(row)
+            print(json.dumps(rows, indent=2))
             return 0
         if not ranked:
             print("  no match")
             return 0
         for e, s, h in ranked:
-            show(e, s, h, full=a.full)
+            show(e, s, h, full=a.full, judged=(judged or {}).get(e["key"]))
         return 0
     else:
         ap.print_help()
