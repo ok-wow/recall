@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -105,7 +106,21 @@ try:
 finally:
     shutil.rmtree(_h, ignore_errors=True)
 
-TOTAL = 11 * 2 + 2
+# The fresh-clone CI job keeps its own copy of the claude event list, because it
+# cannot import this file without running it. A copy drifts: main sat red for a
+# week after the witness hook landed here and not there. So the suite reads the
+# workflow and fails the moment the two disagree, which is when a person can
+# still see why.
+_wf = (REPO / ".github" / "workflows" / "test.yml").read_text()
+_m = re.search(r"want = \{([^}]*)\}", _wf)
+_ci = set(re.findall(r'"([A-Za-z]+)"', _m.group(1))) if _m else set()
+check(
+    "fresh-clone CI job expects the same claude events as this suite",
+    _ci == EVENTS | HOST_ONLY["claude"],
+    f"workflow has {sorted(_ci)}",
+)
+
+TOTAL = 11 * 2 + 2 + 1
 if fails:
     print(f"FAIL {len(fails)} check(s):")
     for f in fails:
