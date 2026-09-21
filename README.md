@@ -6,11 +6,10 @@
 happened, what was *learned*. The thing that finally worked. The decision, and what
 it was chosen instead of. The approach that looked right and was abandoned, and why.
 
-**Recall.** The next time that lesson matters, it is already in front of your agent.
-Not filed somewhere searchable. In front of it, before anyone thinks to ask.
+**Recall.** The next time that lesson matters, it is already in front of your agent —
+not filed somewhere it could be searched for, but present before anyone thinks to ask.
 
-**Compound.** This is the one that matters. Every session starts further along than
-the last one did. The work stops resetting and starts accumulating — which is the
+**Compound.** Every session starts further along than the last one did. The work stops resetting and starts accumulating — which is the
 only way a tool you use every day gets better instead of staying the same.
 
 Your agent stops solving the same problem twice, and starts building on what it
@@ -29,7 +28,7 @@ or no repo at all is entirely your call.
 
 ## The shape of it
 
-Three ways in. One memory. Two ways out.
+Three ways in, one memory, two ways out.
 
 ```mermaid
 flowchart TB
@@ -74,11 +73,11 @@ session with no way forward. So it counts instead, because nothing else counts
 this, and you cannot tell whether a backstop is load-bearing until you know how
 often it was bypassed. (Claude Code only — Codex has no such event.)
 
-That matters more than it sounds. A lesson captured at the moment it is learned
-carries what it actually cost. The same lesson reconstructed from a transcript
-three hours later carries a summary of it.
+A lesson captured at the moment it is learned carries what it actually cost. The
+same lesson reconstructed from a transcript three hours later carries a summary of
+it, which is why the live path is the main one and the backstops are backstops.
 
-Recalling has two halves, and **you need both**. Most memory tools ship one.
+Recalling has two halves and you need both, though most memory tools ship one.
 
 **Push** is automatic and must be precise. It fires without being asked, so a false
 positive costs more than a miss — a channel that cries wolf gets ignored, and then the one
@@ -90,10 +89,9 @@ an ordinary word that happens to appear.
 is already looking. It searches the full text of everything, including the lessons push
 can never reach.
 
-This is the half most memory tools leave out, and it is the half that carries your
-judgement calls — how this client likes to be handled, why that approach was abandoned.
-Those never contain a literal to match on, so push alone would file them perfectly and
-never show them again. In the memory Recall came from, they were **43% of everything
+Pull is what carries your judgement calls — how this client likes to be handled, why
+that approach was abandoned. Those never contain a literal to match on, so push alone
+would file them perfectly and never show them again. In the memory Recall came from, they were **43% of everything
 captured**. Pull is how you get that 43% back.
 
 ## What it captures
@@ -207,8 +205,8 @@ CHOSEN by the model  (the measurement)   n=339
   MRR   0.269     never retrieved at all: 72
 ```
 
-**The split is the whole point.** Two invocations look identical in a transcript
-and mean opposite things. If the person typed the skill's name, nothing was
+Two invocations look identical in a transcript and mean opposite things, and keeping
+them apart is what makes the number mean anything. If the person typed the skill's name, nothing was
 discovered and a retriever scores well by reading the name back. Only the moments
 the model chose unprompted measure anything, and reporting them together flatters
 the retriever — which is why they are never reported together here.
@@ -223,8 +221,8 @@ comparable on identical ground. On 63 of those moments here:
 
 The judge ranked it higher on 35 moments, search on 13, and they tied on 15.
 
-The last column is the finding. Search never surfaced the right skill *at all*
-for 11 of 63 moments, so no amount of reranking its output could have helped —
+Read the last column first. Search never surfaced the right skill *at all* for 11
+of 63 moments, so no amount of reranking its output could have helped —
 **the ceiling here is which candidates get considered, not how they are ordered.**
 With only ninety skills, every one fits in a single request, so there is no
 retrieval stage to be the bottleneck. That is the opposite of the corpus, where
@@ -266,7 +264,7 @@ why the entry was fetched at all, `judged` says why it is in this position.
 Three deliberate limits:
 
 - **It never fails your query.** No key, a timeout, a busy gateway — you get a
-  note on stderr and the ordinary search order. A rougher ranking beats no answer.
+  note on stderr and the ordinary search order, which is better than no results.
 - **It applies no threshold.** The ordering is the trustworthy part; the absolute
   numbers are not calibrated, and the same lessons under a differently worded
   prompt have been measured moving a score from 0.96 to 0.72. Nothing is dropped
@@ -376,8 +374,8 @@ the script that reads it. `--host codex` switches the last two defaults to
 
 ## It measures itself
 
-Most memory tools can tell you how often they fired. Recall can tell you whether it
-*mattered*, which is a harder and much more useful question.
+Counting how often a memory fired is easy and tells you very little. Recall tries to
+answer the harder question of whether the firing changed anything.
 
 ```bash
 python3 ~/recall/scripts/measure_prevention.py
@@ -392,10 +390,20 @@ call for opposite responses:
 | **Never shown** | The lesson was sitting there and never surfaced. | Retrieval is exactly the fix — a better trigger, or an agent told to ask. |
 
 Reported as a single "how often did it repeat" number, those two are indistinguishable
-and the number cannot guide anything. Split apart, it becomes a work queue. On the
-memory Recall was extracted from, **23 of 28 measurable repeats had never surfaced at
-all** — so most of what looked like a memory problem was a delivery problem, and
-delivery is the fixable kind.
+and the number cannot guide anything. Split apart, it becomes a work queue.
+
+It also changes its mind as the data grows, which is the argument for measuring rather
+than asserting. An early run on the memory Recall was extracted from found 23 of 28
+measurable repeats had never surfaced, which pointed at delivery. The same command on
+that memory today, over 155 measurable repeats, reports **125 surfaced first and
+repeated anyway** against 30 never surfaced.
+
+Those two runs are not strictly comparable — the second has a fuller fire log to check
+against, so "was it ever shown" is easier to satisfy. What makes the 125 hard to explain
+away is its shape: it spans 94 distinct entries, and the median event had been shown
+**eleven** times before the lesson repeated. Whatever the first number meant, better
+retrieval will not fix these. They were read and did not change what happened, so they
+need rewriting, retiming or enforcing instead.
 
 The tool is equally clear about what it cannot see. A recurrence written as a bare
 counter has no date, so it cannot be placed against the moment a lesson fired, and it
@@ -405,8 +413,7 @@ commit time to keep that bucket shrinking.
 **What no version of this proves is causation.** A lesson that appeared, followed by a
 failure that did not repeat, is encouraging rather than conclusive — the situation may
 simply not have come back. Settling it would take a holdout arm, and Recall does not
-run one. It tells you what it knows, marks the edge of that, and leaves the inference
-to you.
+run one. It reports what it measured and where that measurement stops.
 
 ## Worth knowing before you install
 
@@ -444,7 +451,7 @@ Three that shaped the design:
 python3 -m tests.run    # or: for t in tests/test_*.py; do python3 "$t"; done
 ```
 
-Ten suites, written to assert behaviour rather than chase coverage: that a correct
+Twelve suites, written to assert behaviour rather than chase coverage: that a correct
 no-op stays distinguishable from a failure, that housekeeping still runs on the idle
 path, that a test cannot reach production state, and that an entry written in plain
 prose is still retrievable.
