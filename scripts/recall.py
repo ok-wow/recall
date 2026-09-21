@@ -18,6 +18,7 @@ channel. The precise literal matcher stays exactly as it is for auto-injection.
     recall.py --id <entry-id>                   # one entry in full
     recall.py --recurring                       # lessons that repeated anyway
     recall.py --unreachable                     # entries auto-injection cannot see
+    recall.py --hidden                          # statements no channel ever displays
     recall.py --stats                           # corpus + coverage health
     recall.py --json "query"                    # machine-readable
 
@@ -231,28 +232,66 @@ def _longest_unknown(raw: dict, used: str = "") -> str:
     return best if len(best) >= 40 else ""
 
 
+# The field names `show` prints from, hoisted out of it because a second
+# consumer now needs to know what a reader actually sees. `--hidden` compares
+# against these: a pasted copy drifts, and a drifted copy reports statements
+# that are on screen while missing statements that are not.
+#
+# "decided"/"why" are the DECISIONS shape; without them a decision entry
+# retrieves correctly and then prints an empty body, which reads as a bug.
+# "pattern"/"consequence" are an older entry schema still in the corpus.
+# 28 entries carried real content under them and rendered BLANK -- searchable,
+# because BM25 indexes every string, and unreadable, because display did not
+# know the names. A reader that does not know a field treats it as absent.
+DISPLAY_BODY = ("what", "failure", "summary", "symptom", "trigger", "decided",
+                "pattern", "consequence", "observed", "cause", "what_happened")
+DISPLAY_FIX = ("fix_pattern", "fix", "why", "remedy", "rule", "lesson",
+               "doctrine", "workaround", "how_to_apply", "correct_behavior")
+
+
+def _first(raw: dict, fields: tuple[str, ...]):
+    """First field with anything in it. Truthiness, not isinstance(str): a
+    catalog occasionally stores a body as a list, and display already str()s
+    whatever it gets."""
+    for f in fields:
+        v = raw.get(f)
+        if v:
+            return v
+    return ""
+
+
+def _push_channel():
+    """The push half, imported rather than described.
+
+    build_probe_index renders an injected entry through its own summarize() and
+    remedy(), over field lists that are NOT the same as this file's -- it reads
+    `what_failed` and `context`, which show() does not, and misses `what`, which
+    show() leads with. A statement is only hidden when NEITHER channel would
+    print it, so the audit has to ask the real function.
+
+    Imported here and not at module scope because build_probe_index imports
+    PyYAML at import time, and this file defers that so --help works without it.
+    """
+    if _push_channel.mod is None:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import build_probe_index
+        _push_channel.mod = build_probe_index
+    return _push_channel.mod
+
+
+_push_channel.mod = None
+
+
 def show(e: dict, score: float | None = None, hits: list[str] | None = None, full: bool = False) -> None:
     r = e["raw"]
     tag = f"  [{e['catalog']}]"
     rec = f"  ×{e['recurrences'] + 1}" if e["recurrences"] else ""
     head = f"{e['id']}{rec}"
     print(f"\n{head}\n{tag}" + (f"  score {score:.1f}  matched: {', '.join(hits[:6])}" if score is not None else ""))
-    # "decided"/"why" are the DECISIONS shape; without them a decision entry
-    # retrieves correctly and then prints an empty body, which reads as a bug.
-    # "pattern"/"consequence" are an older entry schema still in the corpus.
-    # 28 entries carried real content under them and rendered BLANK -- searchable,
-    # because BM25 indexes every string, and unreadable, because display did not
-    # know the names. A reader that does not know a field treats it as absent.
-    body = (r.get("what") or r.get("failure") or r.get("summary") or r.get("symptom")
-            or r.get("trigger") or r.get("decided") or r.get("pattern")
-            or r.get("consequence") or r.get("observed") or r.get("cause")
-            or r.get("what_happened") or _longest_unknown(r) or "")
+    body = _first(r, DISPLAY_BODY) or _longest_unknown(r) or ""
     body = " ".join(str(body).split())
     print("  " + (body if full else body[:400] + ("…" if len(body) > 400 else "")))
-    fix = (r.get("fix_pattern") or r.get("fix") or r.get("why") or r.get("remedy")
-           or r.get("rule") or r.get("lesson") or r.get("doctrine")
-           or r.get("workaround") or r.get("how_to_apply")
-           or r.get("correct_behavior") or "")
+    fix = _first(r, DISPLAY_FIX)
     if fix:
         fix = " ".join(str(fix).split())
         # A decision has a reason, not a fix. Printing "FIX:" over a rationale
@@ -263,6 +302,87 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None, ful
         print("  PROBE WHEN:")
         for p in e["probe_when"]:
             print(f"    - {p}")
+
+
+# A quoted statement short enough to be a label ("same bug", "see #12") carries
+# no requirement, so 20 characters is the floor. Quotes are the signal: a note
+# that QUOTES someone is a note recording words that were said to the team.
+QUOTED = re.compile(r'"([^"]{20,})"')
+# Half the words missing, deliberately crude. It catches a requirement that was
+# never promoted into a displayed field. It does not judge wording, and it is
+# not meant to: a subtler test would need to know what the words MEAN, and a
+# check nobody can predict the output of gets switched off.
+HIDDEN_MISSING_RATIO = 0.5
+
+
+def _flatten(val) -> str:
+    """A recurrence note is usually a string and sometimes a list or a map --
+    `recurrence_log:` in one live corpus is a list of dated entries. str() on a
+    list would work by accident (repr keeps the quotes); this works on purpose."""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, list):
+        return "\n".join(_flatten(v) for v in val)
+    if isinstance(val, dict):
+        return "\n".join(_flatten(v) for v in val.values())
+    return str(val)
+
+
+def displayed_text(e: dict) -> str:
+    """Everything either channel actually puts in front of a reader.
+
+    Assembled by CALLING the display code -- this file's own field lists and the
+    push channel's summarize()/remedy() -- rather than by restating their field
+    names a second time. probe_when counts: `--id --full` prints it. The
+    `_longest_unknown` fallback counts too, and it is the reason this is a
+    function and not a set of field names -- on an entry with no recognised body
+    field, the longest unknown string IS the body on screen, and that can be a
+    recurrence note, which is then not hidden at all.
+    """
+    raw, push = e["raw"], _push_channel()
+    parts = [_first(raw, DISPLAY_BODY) or _longest_unknown(raw) or "",
+             _first(raw, DISPLAY_FIX),
+             # summarize/remedy truncate at 400 chars, and that truncation is
+             # itself part of the answer: what push prints is what push prints.
+             push.summarize(raw), push.remedy(raw)]
+    parts += e["probe_when"]
+    return "\n".join(str(p) for p in parts)
+
+
+def hidden_statements(entries: list[dict]) -> list[dict]:
+    """Quoted statements filed in a recurrence note that no channel will show.
+
+    A recurrence note records the SAME requirement failing again. When it
+    instead quotes someone ADDING or widening a requirement, that requirement is
+    now written down and undeliverable. No delivery path renders a `recurrence_*`
+    key: push prints summarize()/remedy(), pull prints show()'s fields, and
+    neither list contains it. load_entries harvests every field, so the words
+    still move BM25 -- the statement ranks and never appears. That gap is how a
+    correction recorded faithfully on the day it was given was absent from the
+    line an agent reads, and the same mistake repeated six days later.
+
+    Compares against displayed_text(), which is derived from the display code
+    rather than a copy of its field names, so a field added to either channel
+    tomorrow stops producing findings tomorrow.
+    """
+    found = []
+    for e in entries:
+        notes = [(k, v) for k, v in e["raw"].items() if str(k).startswith("recurrence_")]
+        if not notes:
+            continue
+        # One tokenizer for the whole tool. BM25 already decides what counts as
+        # a word here, and a second vocabulary would let a statement be "hidden"
+        # from a reader and "present" to the search that found it.
+        shown = set(tokenize(displayed_text(e)))
+        for key, note in notes:
+            for quote in QUOTED.findall(_flatten(note)):
+                said = set(tokenize(quote))
+                missing = sorted(said - shown)
+                if said and len(missing) / len(said) >= HIDDEN_MISSING_RATIO:
+                    found.append({"id": e["id"], "catalog": e["catalog"], "key": key,
+                                  "statement": " ".join(quote.split()),
+                                  "missing": missing})
+    return found
 
 
 def log_pull(shown: list, mode: str, query: str = "") -> None:
@@ -308,6 +428,8 @@ def main() -> int:
     ap.add_argument("--full", action="store_true", help="do not truncate bodies")
     ap.add_argument("--recurring", action="store_true", help="lessons that repeated anyway")
     ap.add_argument("--unreachable", action="store_true", help="entries auto-injection cannot see")
+    ap.add_argument("--hidden", action="store_true",
+                    help="statements inside recurrence notes that no channel displays")
     ap.add_argument("--stubs", action="store_true",
                     help="entries with an id and no lesson — they count as covered and help nobody")
     ap.add_argument("--stats", action="store_true")
@@ -345,10 +467,37 @@ def main() -> int:
             "unreachable_missing_probe_when": len(noprobe),
             "unreachable_despite_probe_when": len(unreachable) - len(noprobe),
             "reachable_by_recall": len(entries),
+            # Counted here because a corpus can be 100% reachable and still be
+            # failing to deliver: reachability is per ENTRY, this is per
+            # STATEMENT inside an entry that is already reachable.
+            "hidden_statements": len(hidden_statements(entries)),
             "unreadable_catalogs": getattr(load_entries, "broken", []),
         }
         print(json.dumps(out, indent=2) if a.json else
               "\n".join(f"  {k:34} {v}" for k, v in out.items()))
+        return 0
+
+    if a.hidden:
+        # Every finding, never a page of them. -n ranks the browse modes; this
+        # is an audit, and an audit that silently stops at five under-reports
+        # the one number it exists to produce.
+        found = hidden_statements(entries)
+        if a.json:
+            print(json.dumps(found, indent=2))
+            return 0
+        if not found:
+            print(f"  {len(entries)} entries, no statement hidden inside a recurrence note")
+            return 0
+        print(f"{len(found)} statement(s) inside a recurrence note that no channel displays:\n")
+        for f in found:
+            print(f"  {f['id']}  ·  {f['key']}")
+            print(f"    said: \"{f['statement'][:140]}\"")
+            print(f"    never displayed: {', '.join(f['missing'][:8])}\n")
+        print("Put the requirement in a displayed field, or give it its own entry.")
+        # 0 even when it finds something, like every other report mode here.
+        # Whether a backlog of unpromoted statements blocks anything is the
+        # corpus owner's policy, and a corpus is never clean the way one file
+        # can be -- a gate that is red on day one is a gate someone removes.
         return 0
 
     if a.id:

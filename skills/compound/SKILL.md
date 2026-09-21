@@ -102,6 +102,25 @@ recurrence_2026_09_14: "the shape test could not express a multi-word command"
 > before the failure repeated?* Those two cases need opposite fixes, and a
 > corpus of undated counters measures neither.
 
+Write a recurrence note only for the same requirement that failed again.
+
+A new requirement is not a recurrence. A widened requirement is not a
+recurrence. Put a new or widened requirement in a displayed field. Give it its
+own entry when it stands alone.
+
+Check your own notes with this command:
+
+```bash
+python3 "$RECALL_SKILL_DIR/recall.py" --hidden
+```
+
+> **Why:** no delivery channel prints a `recurrence_*` key. Auto-injection
+> renders the entry's summary and its fix, and `recall` prints the body and the
+> fix. The words in a note are still indexed, so the statement ranks in a search
+> and is shown to nobody. That is how a correction recorded faithfully on the
+> day it was given was missing from the line an agent actually reads, and the
+> same mistake repeated six days later.
+
 > **Why search at all:** automatic injection matches only code-shaped tokens, so
 > it cannot show you an entry written in prose. In the corpus this was extracted
 > from that was 43% of everything captured. Silence from the injector is not
