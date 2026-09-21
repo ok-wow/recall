@@ -322,9 +322,15 @@ writes it anywhere — not to the retrieval log, not to an error message, not to
 disk. If the variable is unset, `--rerank` says so on stderr and gives you the
 ordinary search order.
 
-The gateway's own dashboard shows what each request cost. The API response does
-not carry a cost field, only token counts, so `recall` cannot tell you the price
-itself.
+On cost: the response carries token counts and no price, but the gateway's model
+catalogue publishes one — at the time of writing, `$0.000000042` per input token
+and nothing for output, because this model generates no text. A `--rerank` call
+sends roughly three thousand tokens, so ten thousand of them come to about
+`$1.26`. Check the current number yourself rather than trusting this line:
+
+```bash
+curl -s -H "Authorization: Bearer $AI_GATEWAY_API_KEY"   https://ai-gateway.vercel.sh/v1/models | grep -A2 '"typesafe-ai/jev"'
+```
 
 Worth one line in your shell profile if you use it by hand:
 
