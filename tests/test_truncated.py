@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Fixtures for recall.py --truncated — the entries push cuts on the way out.
 
-The push channel prints at most 400 characters of an entry's body and 400 of
-its "what to do" line. Anything past that fires, looks delivered, and reaches
-the reader with its instruction missing. This is the third blind spot the tool
+The push channel prints at most `build_probe_index.PUSH_CAP` characters of an
+entry's body and the same of its "what to do" line. Anything past that fires,
+looks delivered, and reaches the reader with its instruction missing. This is the third blind spot the tool
 reports, and the only one where the entry is doing everything right.
 
 Two cases decide whether the report is usable at all: it must find a cut that
@@ -26,8 +26,14 @@ RECALL = SCRIPT_DIR / "recall.py"
 sys.path.insert(0, str(SCRIPT_DIR))
 import build_probe_index as push  # noqa: E402
 
-CAP = 400
-PAD = "word " * 90                      # ~450 chars of filler, comfortably over
+# Both the fixtures and the assertions read the LIVE cap. Sizing a fixture to
+# cross a hardcoded threshold means the day the threshold moves, the fixture
+# stops crossing it, the behaviour never fires, and four green checks turn red
+# for a reason that has nothing to do with the behaviour. That is exactly what
+# happened here when the cap went 400 -> 1200
+# (FAILURE_MODES: config-limit-raise-breaks-tests-with-fixture-sized-to-old-limit).
+CAP = push.PUSH_CAP
+PAD = "word " * (CAP // 5 + 10)         # comfortably over the cap, whatever it is
 
 
 def entry(eid, **fields):
