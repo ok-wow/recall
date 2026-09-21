@@ -180,9 +180,48 @@ python3 ~/recall/scripts/measure_prevention.py --gaps   # lessons that never sur
 # what has been learned, and how much of it can be recalled
 python3 ~/recall/scripts/recall.py --stats
 
+# would retrieval have found it? replay decisions you already made
+python3 ~/recall/scripts/replay.py
+
 # ask again, and let a judgment model put the best answer first
 python3 ~/recall/scripts/recall.py --rerank "an approval that came from a bot"
 ```
+
+### `replay.py` — measure the retriever against your own history
+
+Every claim about retrieval needs ground truth, and labelling it is why most
+retrievers are never measured. Your transcripts already hold some: **every time
+a session loaded a skill, it decided which procedure that moment called for.**
+Replay the moment and see where the retriever puts that skill. Nobody labels
+anything, and it works before you have a corpus at all.
+
+```
+90 skills · 160 transcripts holding a skill call · 537 invocations
+  0 had no typed prompt before them · 56 used a skill outside this library
+
+NAMED by the person  (a control — it proves nothing)   n=142
+  hit@1  38.7%   hit@3  59.9%   hit@5  76.1%   hit@10  80.3%
+
+CHOSEN by the model  (the measurement)   n=339
+  hit@1  15.0%   hit@3  32.2%   hit@5  38.1%   hit@10  48.1%
+  MRR   0.269     never retrieved at all: 72
+```
+
+**The split is the whole point.** Two invocations look identical in a transcript
+and mean opposite things. If the person typed the skill's name, nothing was
+discovered and a retriever scores well by reading the name back. Only the moments
+the model chose unprompted measure anything, and reporting them together flatters
+the retriever — which is why they are never reported together here.
+
+`--judge` ranks the same moments with the judgment model instead, so the two are
+comparable on identical ground. `--misses` lists what search put outside the top
+three, worst first; that list is usually a better argument for rewriting a
+description than any opinion about it.
+
+What it cannot tell you: that a session chose a skill does not make it the right
+skill. A miss can be the retriever failing or the original choice being poor, and
+this cannot separate them. Read it as a comparison between retrievers, not as a
+score for either.
 
 ### `--rerank` — when search order is the wrong order
 
@@ -289,8 +328,10 @@ Every path resolves through an environment variable with a default. No absolute 
 | `RECALL_JEV_TIMEOUT` | `20` | seconds before the judge is given up on |
 | `RECALL_AGENT_BIN` | `claude` | CLI used for unattended distillation |
 | `RECALL_HOST_DIR` | `~/.claude` | your agent's dir (transcripts, settings) |
+| `RECALL_TRANSCRIPTS_DIR` | `$RECALL_HOST_DIR/projects` | history `replay.py` reads |
+| `RECALL_SKILLS_DIR` | `$RECALL_HOST_DIR/skills` | the candidate set `replay.py` ranks |
 
-Those are the four you are likely to set. Another dozen `RECALL_*` variables tune
+The first two are the ones you are likely to set. Another dozen `RECALL_*` variables tune
 the drain's budgets, timeouts and paths; each is named and defaulted at the top of
 the script that reads it. `--host codex` switches the last two defaults to
 `~/.codex` and `codex`.
