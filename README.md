@@ -217,6 +217,55 @@ Three deliberate limits:
 
 Set `RECALL_RERANK=1` to turn it on for a whole session without passing the flag.
 
+#### Getting a key
+
+The judge is `typesafe-ai/jev`, one of the models in Vercel's AI Gateway catalogue.
+There is nothing special to sign up for — an ordinary AI Gateway key reaches it.
+
+From the [AI Gateway API Keys page](https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys):
+**Create key**, name it, and copy the value. You cannot retrieve it again. It
+starts with `vck_`.
+
+Or from the terminal, with the [Vercel CLI](https://vercel.com/docs/cli):
+
+```bash
+vercel ai-gateway api-keys create --name recall-rerank
+```
+
+Then put it in your environment — `AI_GATEWAY_API_KEY` is Vercel's own name for
+it, so anything else you run through the gateway will find the same variable:
+
+```bash
+export AI_GATEWAY_API_KEY=vck_...
+```
+
+**Give the key a budget.** You can cap spend per key when you create it, and this
+is a tool you may leave switched on with `RECALL_RERANK=1`. A budgeted key fails
+closed — and because a failed judge falls back to search order, a key that hits
+its cap makes `--rerank` quietly stop reranking rather than break your retrieval.
+
+The dashboard and CLI steps above are Vercel's, from their API-keys docs. What
+this project verified is the part that touches `recall`: that `typesafe-ai/jev`
+is in the gateway's public model list and answers an ordinary `vck_` key, and
+that an unset variable prints the line above and returns search order.
+
+Two more things from Vercel's docs, worth knowing before you leave a key lying
+around:
+
+- A key is tied to the person who created it. If they leave the team, Vercel
+  deactivates it. For something long-lived, create it as a team-attributed key.
+- If a key leaks, you can revoke it without being signed in, by reporting it to
+  `https://api.vercel.com/external/compromised_secret`.
+
+Recall reads the key from the environment, sends it as a bearer token, and never
+writes it anywhere — not to the retrieval log, not to an error message, not to
+disk. If the variable is unset, `--rerank` says so on stderr and gives you the
+ordinary search order.
+
+The gateway's own dashboard shows what each request cost. The API response does
+not carry a cost field, only token counts, so `recall` cannot tell you the price
+itself.
+
 Worth one line in your shell profile if you use it by hand:
 
 ```bash
