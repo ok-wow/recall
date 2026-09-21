@@ -166,6 +166,13 @@ python3 ~/recall/scripts/recall.py --id the-q3-figures-live-in-the-finance-sheet
 # what has repeated ANYWAY, despite being written down
 python3 ~/recall/scripts/recall.py --recurring
 
+# what auto-injection can never fire on — push's blind spot, entry by entry
+python3 ~/recall/scripts/recall.py --unreachable
+
+# ...and the blind spot INSIDE an entry: a correction filed into a recurrence
+# note, which no channel prints, so nobody is ever shown it
+python3 ~/recall/scripts/recall.py --hidden
+
 # ...and whether those repeats were ever SHOWN first — the honest scoreboard
 python3 ~/recall/scripts/measure_prevention.py
 python3 ~/recall/scripts/measure_prevention.py --gaps   # lessons that never surfaced
@@ -280,7 +287,7 @@ Three that shaped the design:
 python3 -m tests.run    # or: for t in tests/test_*.py; do python3 "$t"; done
 ```
 
-Nine suites, written to assert behaviour rather than chase coverage: that a correct
+Ten suites, written to assert behaviour rather than chase coverage: that a correct
 no-op stays distinguishable from a failure, that housekeeping still runs on the idle
 path, that a test cannot reach production state, and that an entry written in plain
 prose is still retrievable.
