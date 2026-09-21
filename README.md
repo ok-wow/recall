@@ -171,6 +171,9 @@ python3 ~/recall/scripts/recall.py --unreachable
 # note, which no channel prints, so nobody is ever shown it
 python3 ~/recall/scripts/recall.py --hidden
 
+# ...and the blind spot on the way OUT: entries push cuts mid-instruction
+python3 ~/recall/scripts/recall.py --truncated
+
 # ...and whether those repeats were ever SHOWN first — the honest scoreboard
 python3 ~/recall/scripts/measure_prevention.py
 python3 ~/recall/scripts/measure_prevention.py --gaps   # lessons that never surfaced
@@ -404,6 +407,29 @@ away is its shape: it spans 94 distinct entries, and the median event had been s
 **eleven** times before the lesson repeated. Whatever the first number meant, better
 retrieval will not fix these. They were read and did not change what happened, so they
 need rewriting, retiming or enforcing instead.
+
+### Where the 125 came from
+
+The 125 that were shown and repeated anyway are not evenly spread. They are
+**2.4x longer** than a typical entry — a median of 3,472 characters against the
+corpus median of 1,432 — and push prints at most 400 characters of an entry's
+body and 400 of its fix.
+
+So a good number of them were never really delivered. They fired, the channel
+cut them, and the reader got advice that stops mid-sentence:
+
+```
+verify service health independently (curl/port) rather than ▌
+                                                            ↑ the rest never printed
+```
+
+`recall.py --truncated` finds them and sorts the cheapest first, because the
+worst offender in that memory is **18 characters** over the limit on a lesson
+that had already fired 460 times.
+
+That reframes part of the heeding problem as a delivery problem after all, which
+is the sort of thing you only find by looking at the entries behind a number
+instead of the number.
 
 The tool is equally clear about what it cannot see. A recurrence written as a bare
 counter has no date, so it cannot be placed against the moment a lesson fired, and it

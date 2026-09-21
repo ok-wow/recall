@@ -439,6 +439,59 @@ def rerank(query: str, ranked: list, limit: int) -> tuple[list, dict | None]:
     return pool + ranked[len(pool):], judged
 
 
+# Three words is the smallest cut that can remove an instruction rather than
+# punctuation or a dangling plural.
+MIN_CUT_WORDS = 3
+
+
+def truncated_fixes(entries: list[dict]) -> list[dict]:
+    """Entries whose displayed text stops before the instruction does.
+
+    The push channel caps the body and the "what to do" line at 400 characters
+    each. An entry longer than that still fires, still looks delivered, and
+    reaches the reader with its operative half missing — often mid-sentence,
+    which reads as advice that simply trails off.
+
+    That is a THIRD blind spot, distinct from the two this tool already reports.
+    `--unreachable` finds entries push can never fire on. `--hidden` finds
+    requirements filed where no channel prints them. This finds entries that
+    fire correctly and are cut on the way out.
+
+    Derived by calling the push channel and comparing what it returns against
+    the field it drew from, rather than by re-stating its cap here. If push
+    changes its cap or its field order tomorrow, this follows.
+    """
+    push = _push_channel()
+    found = []
+    for e in entries:
+        raw = e["raw"]
+        parts = [("what to do", push.remedy(raw)), ("body", push.summarize(raw))]
+        losses = []
+        for label, shown in parts:
+            if not shown:
+                continue
+            # Recover the source field by matching push's own output against it.
+            # Asking the layer beats keeping a second copy of its field list.
+            full = ""
+            for v in raw.values():
+                if isinstance(v, str):
+                    flat = " ".join(v.split())
+                    if flat.startswith(shown) and len(flat) > len(full):
+                        full = flat
+            tail = full[len(shown):] if full else ""
+            # A cut that loses a full stop is not a defect, and a report that
+            # flags one gets switched off before it can show a real one. The
+            # loss has to be words.
+            if len(re.findall(r"[A-Za-z0-9]{2,}", tail)) >= MIN_CUT_WORDS:
+                losses.append({"part": label, "cut": len(full) - len(shown),
+                               "tail": tail})
+        if losses:
+            found.append({"id": e["id"], "catalog": e["catalog"], "key": e["key"],
+                          "losses": losses,
+                          "worst": max(l["cut"] for l in losses)})
+    return sorted(found, key=lambda f: f["worst"])
+
+
 def log_pull(shown: list, mode: str, query: str = "", judged: dict | None = None) -> None:
     """Record entries a PULL actually put in front of someone.
 
@@ -491,6 +544,8 @@ def main() -> int:
                     help="statements inside recurrence notes that no channel displays")
     ap.add_argument("--stubs", action="store_true",
                     help="entries with an id and no lesson — they count as covered and help nobody")
+    ap.add_argument("--truncated", action="store_true",
+                    help="entries the push channel cuts before the instruction ends")
     ap.add_argument("--rerank", action="store_true",
                     help="reorder results by judged relevance (needs AI_GATEWAY_API_KEY)")
     ap.add_argument("--stats", action="store_true")
@@ -559,6 +614,36 @@ def main() -> int:
         # Whether a backlog of unpromoted statements blocks anything is the
         # corpus owner's policy, and a corpus is never clean the way one file
         # can be -- a gate that is red on day one is a gate someone removes.
+        return 0
+
+    if a.truncated:
+        found = truncated_fixes(entries)
+        if a.json:
+            print(json.dumps(found, indent=2))
+            return 0
+        if not found:
+            print(f"  {len(entries)} entries, none cut on the way out")
+            return 0
+        bands = [(1, 100, "trim a clause"), (101, 300, "trim a sentence"),
+                 (301, 10**9, "needs rewriting")]
+        print(f"{len(found)} of {len(entries)} entries are cut before the instruction "
+              f"ends.\nThey fire, they look delivered, and the reader never sees "
+              f"the rest.\n")
+        for lo, hi, label in bands:
+            band = [f for f in found if lo <= f["worst"] <= hi]
+            if not band:
+                continue
+            print(f"  {len(band)} · {label} ({lo}-{hi if hi < 10**9 else '∞'} chars over)")
+            # Cheapest first: an entry eighteen characters over is a one-line fix
+            # on a lesson that has already cost something.
+            for f in band[:a.limit]:
+                worst = max(f["losses"], key=lambda l: l["cut"])
+                print(f"      +{worst['cut']:<4} {f['id']}  ({worst['part']})")
+                print(f"            never shown: …{worst['tail'][:90].strip()}")
+            if len(band) > a.limit:
+                print(f"      … and {len(band) - a.limit} more")
+            print()
+        print("Shorten the field, or move the operative sentence to the front of it.")
         return 0
 
     if a.id:
