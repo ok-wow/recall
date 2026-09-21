@@ -39,23 +39,43 @@ from pathlib import Path
 
 # .expanduser() on both: build_probe_index.py and recall-probe-inject.py already
 # do it, so RECALL_CATALOG_DIR=~/x used to index fine and then read as missing.
-RECALL_HOME = Path(os.environ.get("RECALL_HOME") or Path.home() / ".recall").expanduser()
-CATALOG_DIR = Path(os.environ.get("RECALL_CATALOG_DIR")
-                   or RECALL_HOME / "catalogs").expanduser()
+def env_path(*names_then_default) -> Path:
+    """First of several env vars that is set, else the default.
+
+    Two names because this file has two lineages that were merged: the shipped
+    tool names its variables RECALL_*, and the okwow-compound install that has
+    been running it names them OKWOW_*. Both sets of tests and hooks are still
+    out there, so both are honoured, RECALL_ first.
+    """
+    *names, default = names_then_default
+    for n in names:
+        raw = os.environ.get(n)
+        if raw:
+            return Path(raw).expanduser()
+    return Path(default).expanduser()
+
+
+RECALL_HOME = env_path("RECALL_HOME", "OKWOW_HOME", Path.home() / ".recall")
+CATALOG_DIR = env_path("RECALL_CATALOG_DIR", "OKWOW_CATALOG_DIR",
+                       RECALL_HOME / "catalogs")
+# Every skill that carries a rules.yaml is part of the searchable corpus. See
+# load_rules for why they are indexed but scored separately.
+SKILLS_DIR = env_path("RECALL_SKILLS_DIR", "OKWOW_SKILLS_DIR",
+                      Path.home() / ".claude/skills")
 # DE holds decisions and stated preferences rather than failures: what was
 # chosen, what was rejected, and why. A failure log tells you what broke; it
 # never tells you how the person you work with makes up their mind.
 CATALOGS = {"FM": "FAILURE_MODES.yaml", "PF": "PROCESS_FAILURES.yaml",
             "DE": "DECISIONS.yaml"}
-PROBE_INDEX = Path(os.environ.get("RECALL_PROBE_INDEX")
-                   or RECALL_HOME / "probe-index.json").expanduser()
+PROBE_INDEX = env_path("RECALL_PROBE_INDEX", "OKWOW_PROBE_INDEX",
+                       RECALL_HOME / "probe-index.json")
 # The SAME log auto-injection writes, so one analysis joins both retrieval paths.
 # Logging only push made "never surfaced" mean "never AUTO-INJECTED": an entry a
 # person or agent pulled and then ignored was counted as a delivery failure when
 # it was a heeding failure. Those two need opposite fixes, so conflating them
 # produces a number that cannot drive a decision.
-SURFACED_LOG = Path(os.environ.get("RECALL_SURFACED_LOG")
-                    or RECALL_HOME / "surfaced.jsonl").expanduser()
+SURFACED_LOG = env_path("RECALL_SURFACED_LOG", "OKWOW_PROBE_SURFACED_LOG",
+                        RECALL_HOME / "surfaced.jsonl")
 
 WORD = re.compile(r"[a-z0-9][a-z0-9._/-]*", re.I)
 # Ordinary English that carries no retrieval signal. Deliberately short: BM25's
@@ -162,9 +182,56 @@ def load_entries() -> list[dict]:
                 "recurrences": rec, "raw": e, "text": "\n".join(parts),
                 "probe_when": pw if isinstance(pw, list) else ([pw] if pw else []),
             })
+    entries.extend(load_rules(broken))
     load_entries.broken = broken
     load_entries.parsed = parsed
     return entries
+
+
+def load_rules(broken: list[dict]) -> list[dict]:
+    """Index the rules.yaml files of the kind:rules skills.
+
+    Same degrade-never-die contract as the catalogs: an unparseable rules file
+    is reported as data and the rest still serve. Rules carry no probe_when and
+    are not in the injection index by design -- they reach a session when their
+    skill fires -- so --stats scores injection over the catalogs alone and
+    counts these separately. Folding them in would have moved a tracked metric
+    by 200 entries without anything actually getting less reachable.
+    """
+    import yaml            # deferred for the same reason load_entries defers it
+    out = []
+    for rf in sorted(SKILLS_DIR.glob("*/rules.yaml")):
+        skill = rf.parent.name
+        # The display tag is the owning skill, minus the provenance prefix that
+        # is true of nearly everything: [doctrine], not [okwow-doctrine].
+        label = skill[6:] if skill.startswith("okwow-") else skill
+        try:
+            data = yaml.safe_load(rf.read_text()) or {}
+        except Exception as exc:
+            first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+            broken.append({"catalog": label, "path": str(rf), "error": first})
+            continue
+        rules = data.get("rules") if isinstance(data, dict) else data
+        for r in rules or []:
+            if not isinstance(r, dict) or not r.get("id"):
+                continue
+            parts = []
+            for f, v in r.items():
+                if f in SKIP_FIELDS:
+                    continue
+                if isinstance(v, str) and not ISO_DATE.match(v.strip()):
+                    parts.append(v)
+                elif isinstance(v, list):
+                    parts.extend(str(x) for x in v if isinstance(x, (str, int, float)))
+            # The owning skill is part of what you are searching for: "which
+            # skill holds the rule about X" is a real question this answers.
+            parts.append(skill)
+            out.append({
+                "key": f"{label}:{r['id']}", "id": r["id"], "catalog": label,
+                "recurrences": 0, "raw": r, "text": "\n".join(parts),
+                "probe_when": [], "is_rule": True, "skill": skill,
+            })
+    return out
 
 
 def bm25(entries: list[dict], query: str, k1: float = 1.5, b: float = 0.75) -> list[tuple[dict, float, list[str]]]:
@@ -464,6 +531,11 @@ def truncated_fixes(entries: list[dict]) -> list[dict]:
     push = _push_channel()
     found = []
     for e in entries:
+        # Rules never reach the push channel -- they arrive when their skill
+        # fires, uncut -- so measuring them against push's cap counts a
+        # truncation that cannot happen. Left in and the number moves by 9.
+        if e.get("is_rule"):
+            continue
         raw = e["raw"]
         parts = [("what to do", push.remedy(raw)), ("body", push.summarize(raw))]
         losses = []
@@ -566,20 +638,27 @@ def main() -> int:
 
     if a.stats:
         idx = indexed_keys()
-        unreachable = [e for e in entries if e["key"] not in idx]
+        # Rules are not in the injection index by design -- they arrive when
+        # their skill fires -- so scoring them here would move a tracked
+        # percentage without anything becoming less reachable.
+        cat = [e for e in entries if not e.get("is_rule")]
+        rules = [e for e in entries if e.get("is_rule")]
+        unreachable = [e for e in cat if e["key"] not in idx]
         noprobe = [e for e in unreachable if not e["probe_when"]]
         out = {
             "entries": len(entries),
+            "catalog_entries": len(cat),
+            "rules_entries": len(rules),
             "by_catalog": dict(Counter(e["catalog"] for e in entries)),
             "recurring": sum(1 for e in entries if e["recurrences"]),
             "recurrence_events": sum(e["recurrences"] for e in entries),
-            "reachable_by_injection": len(entries) - len(unreachable),
+            "reachable_by_injection": len(cat) - len(unreachable),
             "unreachable_by_injection": len(unreachable),
             # 0.0 on an empty corpus rather than ZeroDivisionError: a fresh
             # install has no entries and --stats is the first thing it is told
             # to run. The old "no readable catalogs" guard returned early and
             # hid this; removing that guard is what surfaced it.
-            "unreachable_pct": round(100 * len(unreachable) / len(entries), 1) if entries else 0.0,
+            "unreachable_pct": round(100 * len(unreachable) / len(cat), 1) if cat else 0.0,
             "unreachable_missing_probe_when": len(noprobe),
             "unreachable_despite_probe_when": len(unreachable) - len(noprobe),
             "reachable_by_recall": len(entries),

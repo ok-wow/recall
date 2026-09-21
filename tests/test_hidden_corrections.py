@@ -109,6 +109,9 @@ def run(d: Path, *args: str, surfaced_log: str | None = None) -> tuple[int, str]
     # real retrieval log is not a cosmetic leak: it is evidence, and this
     # project has already published a baseline that was 45% its own fixtures.
     env = {**os.environ, "RECALL_CATALOG_DIR": str(d),
+           # Pin the last unpinned path too, or every fixture corpus silently
+           # gains the real rules from ~/.claude/skills.
+           "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
            "RECALL_PROBE_INDEX": str(d / "nonexistent-index.json"),
            "RECALL_SURFACED_LOG": surfaced_log or str(d / "surfaced.jsonl")}
     p = subprocess.run([sys.executable, str(RECALL), *args],
@@ -212,6 +215,9 @@ def main() -> int:
 
     # The override must be HONOURED, not merely available.
     env = {**os.environ, "RECALL_CATALOG_DIR": str(d),
+           # Pin the last unpinned path too, or every fixture corpus silently
+           # gains the real rules from ~/.claude/skills.
+           "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
            "RECALL_SURFACED_LOG": str(plog), "RECALL_HOME": str(d / "fake-home")}
     subprocess.run([sys.executable, str(RECALL), "--hidden"],
                    capture_output=True, text=True, env=env)

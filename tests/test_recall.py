@@ -79,6 +79,9 @@ def run(d: Path, *args: str, probe_index: str | None = None,
     # published retrieval evidence fixtures. `surfaced_log` defaults INTO the temp
     # dir so a caller cannot forget it.
     env = {**os.environ, "RECALL_CATALOG_DIR": str(d),
+           # Pin the last unpinned path too, or every fixture corpus silently
+           # gains the real rules from ~/.claude/skills.
+           "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
            "RECALL_PROBE_INDEX": probe_index or str(d / "nonexistent-index.json"),
            "RECALL_SURFACED_LOG": surfaced_log or str(d / "surfaced.jsonl")}
     p = subprocess.run([sys.executable, str(RECALL), *args],
@@ -250,6 +253,9 @@ def main() -> int:
     # directions. Assert the override is honoured, not merely available.
     prod = d / "must-never-be-written.jsonl"
     env_probe = {**os.environ, "RECALL_CATALOG_DIR": str(d),
+           # Pin the last unpinned path too, or every fixture corpus silently
+           # gains the real rules from ~/.claude/skills.
+           "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
                  "RECALL_SURFACED_LOG": str(plog), "RECALL_HOME": str(d / "fake-home")}
     subprocess.run([sys.executable, str(RECALL), "anything"],
                    capture_output=True, text=True, env=env_probe)

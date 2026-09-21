@@ -68,6 +68,9 @@ def catalog_dir() -> Path:
 
 def run(d: Path, *args):
     env = {**os.environ, "RECALL_CATALOG_DIR": str(d),
+           # Pin the last unpinned path too, or every fixture corpus silently
+           # gains the real rules from ~/.claude/skills.
+           "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
            "RECALL_PROBE_INDEX": str(d / "none.json"),
            "RECALL_SURFACED_LOG": str(d / "surfaced.jsonl")}
     p = subprocess.run([sys.executable, str(RECALL), *args],

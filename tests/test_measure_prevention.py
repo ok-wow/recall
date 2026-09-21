@@ -45,6 +45,9 @@ def check(label: str, ok: bool, detail: str = "") -> None:
 def run(d: Path, *args: str) -> tuple[int, dict | str]:
     env = {**os.environ,
            "RECALL_CATALOG_DIR": str(d / "catalogs"),
+           # Pin the last unpinned path too, or every fixture corpus silently
+           # gains the real rules from ~/.claude/skills.
+           "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
            "RECALL_SURFACED_LOG": str(d / "surfaced.jsonl"),
            "RECALL_PROBE_INDEX": str(d / "no-index.json"),
            "RECALL_HOME": str(d / "fake-home")}
