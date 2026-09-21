@@ -125,12 +125,37 @@ def usable(token: str) -> bool:
     return True
 
 
+# What an injected entry is allowed to carry. It is a CEILING, not a spend: an
+# entry shorter than this costs its own length, so raising it only ever bills
+# the long tail.
+#
+# It was 400 for a long time, as a bare literal written twice with no comment
+# and no measurement. Measured 2026-09-21 over 120 entries nobody had rewritten,
+# asking a judge whether the clipped version still let the reader act:
+#
+#     cap     still arriving with a piece missing
+#      400    93/120   77.5%
+#      600    45/120   37.5%
+#      800    12/120   10.0%
+#     1200     3/120    2.5%
+#
+# And the price, across 2,719 displayed fields in the live corpus: mean
+# delivered per field goes 335 -> 380 characters. Uncapped is 383, because only
+# 1% of fields exceed 1200. Push shows at most MAX_ENTRIES=2 entries of two
+# fields each, so 400 -> 1200 costs about 45 tokens on a turn that fires at all.
+#
+# Rewriting entries to fit 400 also works -- measured at 3% still short, better
+# than this -- but it costs authoring effort per entry forever, and this costs
+# 45 tokens once. Do both for the worst entries; do not rely on authoring alone.
+PUSH_CAP = int(os.environ.get("RECALL_PUSH_CAP") or 1200)
+
+
 def summarize(entry: dict) -> str:
     for field in ("summary", "trigger", "what_failed", "context", "decided",
                   "pattern", "consequence"):
         v = entry.get(field)
         if isinstance(v, str) and v.strip():
-            return " ".join(v.split())[:400]
+            return " ".join(v.split())[:PUSH_CAP]
     return ""
 
 
@@ -139,7 +164,7 @@ def remedy(entry: dict) -> str:
                   "rule", "lesson", "doctrine", "workaround"):
         v = entry.get(field)
         if isinstance(v, str) and v.strip():
-            return " ".join(v.split())[:400]
+            return " ".join(v.split())[:PUSH_CAP]
     return ""
 
 
