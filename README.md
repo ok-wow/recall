@@ -105,6 +105,29 @@ and it is why the memory stays worth reading.
 It will never keep a secret. It records where a credential lives, never the
 credential.
 
+## It will tell you when it has nothing
+
+Ask most memory tools about something your team has never hit and they hand you
+their closest row anyway. It looks like an answer. You read it, it doesn't help,
+and you trust the thing a little less every time.
+
+Recall says so instead:
+
+```
+  no lesson here answers that
+```
+
+It works that out by comparing, not by setting a cutoff. Every question it
+judges carries one extra candidate along - a few lines written to be useless,
+shaped like a lesson, saying nothing about anything. A real answer has to beat
+that by a clear margin.
+
+I checked it on 27 questions. The 16 it could answer beat the useless text by a
+mile. The 11 it couldn't didn't beat it at all. There was no overlap between
+them, which is what made the rule safe to ship.
+
+You can always ask to see the results anyway.
+
 ## Try it
 
 It works with **Claude Code** and **Codex**, and it tells you everything it is

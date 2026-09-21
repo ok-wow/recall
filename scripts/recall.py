@@ -410,33 +410,84 @@ def judge_text(e: dict) -> str:
 # lesson that mattered most for one situation sat at BM25 rank 9 of 10.
 RERANK_POOL = int(os.environ.get("RECALL_RERANK_POOL") or 10)
 
+# A candidate written to lose, judged in the SAME call as the real ones.
+#
+# Pull already knows how to say "nothing here": build_probe_index carries three
+# score floors. This side had none, so a nonsense question still came back with
+# a confident top hit -- 8.1 against 32.6 for a real question, and no reader can
+# see that difference. But a floor on Jev's own number is the one thing this
+# project measured and rejected: the ordering is trustworthy and the absolute
+# value is not, moving 0.96 -> 0.72 on the same candidates under a thinner
+# context. So the floor is a comparison instead of a number. This text is
+# grammatical, is shaped like an entry, and is tautological -- it cannot tell
+# anyone to do anything, about any subject. Beating it is the lowest bar a real
+# answer clears, and because it rides in the same request it moves with
+# whatever the judge's scale is doing on THIS question.
+CONTROL_LESSON = (
+    "A project keeps some of its files in folders, and some of those folders "
+    "hold more files than others do. Work tends to happen in the files that "
+    "are being worked on. FIX: When you want to know what a file contains, "
+    "open that file and look at what it contains."
+)
 
-def rerank(query: str, ranked: list, limit: int) -> tuple[list, dict | None]:
+# ...but beating the control is not enough, and measuring said so. Over 27 live
+# questions on the real corpus (2026-09-21): on the 16 the corpus answers, the
+# best lesson beat the control by 0.46 to 0.93. On the 11 it cannot answer,
+# every score collapsed together -- real lessons AND the control all landed
+# between 0.03 and 0.08, separated by -0.11 to +0.03. So at the floor, "did
+# anything beat the control" is a coin toss between two numbers inside the
+# judge's own run-to-run drift.
+#
+# The gap is the signal, not the winner. The two populations are 0.43 apart and
+# never overlap, so any margin between 0.03 and 0.46 scored 16/16 and 11/11.
+# 0.15 is the middle of that: three times the widest gap a nonsense question
+# produced, three times under the narrowest gap a real one did.
+#
+# This is still a number, so be clear about which kind. A floor on Jev's raw
+# score breaks when the whole query's scale shifts -- the same candidates have
+# been measured moving 0.96 -> 0.72 under a thinner context. This margin is
+# measured against a control scored in the SAME request, on the SAME question,
+# so it rides that shift instead of being broken by it.
+ABSTAIN_MARGIN = float(os.environ.get("RECALL_ABSTAIN_MARGIN") or 0.15)
+
+
+def rerank(query: str, ranked: list, limit: int,
+           abstain: bool = True) -> tuple[list, dict | None, bool]:
     """Reorder the top candidates by judged relevance.
 
-    Returns the list unchanged and no scores whenever the judge cannot answer.
-    A rougher ranking is a far better outcome than a query that fails, so every
-    unavailability is a note on stderr and nothing more.
+    Returns the list unchanged, no scores and no abstention whenever the judge
+    cannot answer. A rougher ranking is a far better outcome than a query that
+    fails, so every unavailability is a note on stderr and nothing more.
+
+    The third value is True when no candidate cleared the control by
+    ABSTAIN_MARGIN -- the judge read them all and none of them answers the
+    question.
     """
     pool = ranked[:max(limit, RERANK_POOL)]
     if len(pool) < 2:
-        return ranked, None          # nothing to reorder, and no call to pay for
+        return ranked, None, False   # nothing to reorder, and no call to pay for
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import jev
     except ImportError as exc:
         sys.stderr.write(f"recall: not reranked ({exc}) — showing search order\n")
-        return ranked, None
+        return ranked, None, False
+    texts = [judge_text(e) for e, _, _ in pool]
     try:
-        scores = jev.score(query, [judge_text(e) for e, _, _ in pool])
+        scores = jev.score(query, texts + [CONTROL_LESSON] if abstain else texts)
     except jev.Unavailable as exc:
         sys.stderr.write(f"recall: not reranked ({exc}) — showing search order\n")
-        return ranked, None
+        return ranked, None, False
+    control = scores.pop() if abstain else None
     judged = {e["key"]: sc for (e, _, _), sc in zip(pool, scores)}
     # sorted() is stable, so lessons the judge scores equally keep the search
     # order between them instead of being shuffled by an arbitrary tiebreak.
     pool = sorted(pool, key=lambda t: -judged[t[0]["key"]])
-    return pool + ranked[len(pool):], judged
+    # Ties, and near-ties, go to the control. A lesson that only edges out text
+    # about nothing has not answered anyone.
+    gave_up = (control is not None and scores
+               and max(scores) - control <= ABSTAIN_MARGIN)
+    return pool + ranked[len(pool):], judged, gave_up
 
 
 # Three words is the smallest cut that can remove an instruction rather than
@@ -531,6 +582,52 @@ def log_pull(shown: list, mode: str, query: str = "", judged: dict | None = None
         pass
 
 
+def log_abstain(query: str, judged_count: int) -> None:
+    """Record that a pull was answered with nothing.
+
+    Carries no `entry`, so every reader that keys on one skips it and no
+    existing row changes shape. Without it an abstention is indistinguishable
+    from a query nobody ran, and the two have opposite meanings for coverage.
+    """
+    try:
+        SURFACED_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(SURFACED_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "session": os.environ.get("RECALL_SESSION_ID") or "cli",
+                "event": "recall-abstain",
+                "judged": judged_count,
+                "query": query[:200],
+            }, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
+
+
+def _pull_counts() -> dict:
+    """Free-text pulls answered, and pulls answered with nothing.
+
+    Reads the same log `log_pull` and `log_abstain` write, so the counter can
+    never disagree with what was actually delivered. Never raises: --stats works
+    on a fresh install with no log at all.
+    """
+    answered, abstained = set(), 0
+    try:
+        for line in SURFACED_LOG.read_text(errors="replace").splitlines():
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if r.get("event") == "recall-abstain":
+                abstained += 1
+            elif r.get("event") == "recall-query":
+                answered.add((r.get("ts", ""), r.get("query", "")))
+    except OSError:
+        return {}
+    total = len(answered) + abstained
+    return {"pulls_answered": len(answered), "pulls_abstained": abstained,
+            "abstained_pct": round(100 * abstained / total, 1) if total else 0.0}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="recall", description="Query the okWOW • Recall corpus.")
     ap.add_argument("query", nargs="*", help="free-text question")
@@ -548,6 +645,8 @@ def main() -> int:
                     help="entries the push channel cuts before the instruction ends")
     ap.add_argument("--rerank", action="store_true",
                     help="reorder results by judged relevance (needs AI_GATEWAY_API_KEY)")
+    ap.add_argument("--no-abstain", action="store_true",
+                    help="with --rerank, show the results even when none beat the control")
     ap.add_argument("--stats", action="store_true")
     a = ap.parse_args()
 
@@ -589,6 +688,11 @@ def main() -> int:
             "hidden_statements": len(hidden_statements(entries)),
             "unreadable_catalogs": getattr(load_entries, "broken", []),
         }
+        # A gate that writes somewhere nobody reads is a gate nobody can check.
+        # Abstentions land in the same log as pulls, so count them here: a rate
+        # near zero means the control is not discriminating, and a rate near one
+        # means the corpus stopped answering. Both are visible from one number.
+        out.update(_pull_counts())
         print(json.dumps(out, indent=2) if a.json else
               "\n".join(f"  {k:34} {v}" for k, v in out.items()))
         return 0
@@ -683,12 +787,23 @@ def main() -> int:
     elif a.query:
         q = " ".join(a.query)
         ranked = bm25(entries, q)
-        judged = None
+        judged, abstained = None, False
         # The env var exists so a hook or an agent can turn this on for a whole
         # session without editing every call site. Off unless asked either way.
         if a.rerank or (os.environ.get("RECALL_RERANK") or "").strip() not in ("", "0", "false", "no"):
-            ranked, judged = rerank(q, ranked, a.limit)
+            ranked, judged, abstained = rerank(q, ranked, a.limit,
+                                               abstain=not a.no_abstain)
         ranked = ranked[:a.limit]
+        if abstained:
+            # Nothing is logged as surfaced, because nothing was surfaced.
+            log_abstain(q, len(judged or {}))
+            if a.json:
+                print("[]")
+                return 0
+            print("  no lesson here answers that")
+            print(f"  {len(judged or {})} judged; none beat a control that says nothing.")
+            print("  Re-run with --no-abstain to read them anyway.")
+            return 0
         log_pull(ranked, "recall-query", q, judged)
         if a.json:
             rows = []

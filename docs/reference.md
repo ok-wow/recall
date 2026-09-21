@@ -271,15 +271,58 @@ Three deliberate limits:
 
 - **It never fails your query.** No key, a timeout, a busy gateway — you get a
   note on stderr and the ordinary search order, which is better than no results.
-- **It applies no threshold.** The ordering is the trustworthy part; the absolute
-  numbers are not calibrated, and the same lessons under a differently worded
-  prompt have been measured moving a score from 0.96 to 0.72. Nothing is dropped
-  for scoring low.
+- **It applies no threshold to a raw score.** The ordering is the trustworthy
+  part; the absolute numbers are not calibrated, and the same lessons under a
+  differently worded prompt have been measured moving a score from 0.96 to 0.72.
+  Nothing is ever dropped for scoring below some number. It can still decide
+  that none of them answer you — see below, where the comparison does that job.
 - **It judges more than it shows.** Ten candidates for five results, because in
   the measurement the lesson that mattered most for one situation sat at search
   rank nine.
 
 Set `RECALL_RERANK=1` to turn it on for a whole session without passing the flag.
+
+#### When nothing answers you
+
+Ask a reranked query something this corpus has no lesson about and you get:
+
+```
+  no lesson here answers that
+  10 judged; none beat a control that says nothing.
+  Re-run with --no-abstain to read them anyway.
+```
+
+Search alone cannot do this. BM25 always returns its best row, and its best row
+for a nonsense question still looks like a result — in the measurement, a real
+question scored 32.6 and a nonsense one 8.1, a difference no reader can see.
+
+So every reranked call carries one extra candidate the reader never sees: a
+short piece of text that is shaped like a lesson and says nothing at all. It
+cannot tell anyone to do anything, about any subject. A real answer has to clear
+it by 0.15.
+
+The margin is the part that took measuring. Over 27 live questions:
+
+| | questions | how far the best lesson beat the control |
+|---|---|---|
+| the corpus answers it | 16 | **+0.46 to +0.93** |
+| the corpus cannot | 11 | **−0.11 to +0.03** |
+
+The two never overlap, and any margin between 0.03 and 0.46 scored 16/16 and
+11/11. Down at the floor, "did anything beat the control" alone is a coin toss —
+when nothing is relevant the judge gives *everything* about 0.04, the control
+included, and the winner is decided inside its own run-to-run drift. The size of
+the gap is the signal; which side of zero it falls on is not.
+
+This is still a number, so be clear about which kind. A floor on the raw score
+breaks the moment a query's whole scale shifts. This one is measured against a
+control scored in the **same request, on the same question**, so it moves with
+that shift instead of being broken by it.
+
+`--no-abstain` shows the results anyway, and skips the control slot.
+`--json` returns `[]` rather than a confident wrong answer. Nothing is logged as
+surfaced, because nothing was — a `recall-abstain` row is written instead, so a
+question answered with silence never looks like a question nobody asked.
 
 #### Getting a key
 
@@ -355,6 +398,7 @@ Every path resolves through an environment variable with a default. No absolute 
 | `RECALL_CATALOG_DIR` | `$RECALL_HOME/catalogs` | the YAML catalogs |
 | `RECALL_RERANK` | unset (off) | `1` turns `--rerank` on for every query |
 | `RECALL_RERANK_POOL` | `10` | candidates sent to the judge per query |
+| `RECALL_ABSTAIN_MARGIN` | `0.15` | how far a lesson must beat the control to count |
 | `RECALL_JEV_URL` | the Vercel AI Gateway | where the judge lives |
 | `RECALL_JEV_TIMEOUT` | `20` | seconds before the judge is given up on |
 | `RECALL_AGENT_BIN` | `claude` | CLI used for unattended distillation |
