@@ -44,13 +44,29 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-RECALL_HOME = Path(os.environ.get("RECALL_HOME") or Path.home() / ".recall").expanduser()
-CATALOG_DIR = Path(os.environ.get("RECALL_CATALOG_DIR")
-                   or RECALL_HOME / "catalogs").expanduser()
-SURFACED_LOG = Path(os.environ.get("RECALL_SURFACED_LOG")
-                    or RECALL_HOME / "surfaced.jsonl").expanduser()
-PROBE_INDEX = Path(os.environ.get("RECALL_PROBE_INDEX")
-                   or RECALL_HOME / "probe-index.json").expanduser()
+def env_path(*names_then_default) -> Path:
+    """First of several env vars that is set, else the default.
+
+    Two names because this tool has two lineages that were merged: the shipped
+    tool names its variables RECALL_*, and the okwow-compound install that has
+    been running it names them OKWOW_*. Both sets of hooks and tests are still
+    out there, so both are honoured, RECALL_ first.
+    """
+    *names, default = names_then_default
+    for n in names:
+        raw = os.environ.get(n)
+        if raw:
+            return Path(raw).expanduser()
+    return Path(default).expanduser()
+
+
+RECALL_HOME = env_path("RECALL_HOME", "OKWOW_HOME", Path.home() / ".recall")
+CATALOG_DIR = env_path("RECALL_CATALOG_DIR", "OKWOW_CATALOG_DIR",
+                       RECALL_HOME / "catalogs")
+SURFACED_LOG = env_path("RECALL_SURFACED_LOG", "OKWOW_PROBE_SURFACED_LOG",
+                        RECALL_HOME / "surfaced.jsonl")
+PROBE_INDEX = env_path("RECALL_PROBE_INDEX", "OKWOW_PROBE_INDEX",
+                       RECALL_HOME / "probe-index.json")
 CATALOGS = {"FM": "FAILURE_MODES.yaml", "PF": "PROCESS_FAILURES.yaml",
             "DE": "DECISIONS.yaml"}
 
