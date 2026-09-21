@@ -214,9 +214,30 @@ the model chose unprompted measure anything, and reporting them together flatter
 the retriever — which is why they are never reported together here.
 
 `--judge` ranks the same moments with the judgment model instead, so the two are
-comparable on identical ground. `--misses` lists what search put outside the top
-three, worst first; that list is usually a better argument for rewriting a
-description than any opinion about it.
+comparable on identical ground. On 63 of those moments here:
+
+| | hit@1 | hit@3 | hit@10 | MRR | never retrieved |
+|---|---|---|---|---|---|
+| search | 15.9% | 41.3% | 60.3% | 0.311 | **11 of 63** |
+| judge | **27.0%** | 47.6% | **71.4%** | 0.401 | **0** |
+
+The judge ranked it higher on 35 moments, search on 13, and they tied on 15.
+
+The last column is the finding. Search never surfaced the right skill *at all*
+for 11 of 63 moments, so no amount of reranking its output could have helped —
+**the ceiling here is which candidates get considered, not how they are ordered.**
+With only ninety skills, every one fits in a single request, so there is no
+retrieval stage to be the bottleneck. That is the opposite of the corpus, where
+1,686 entries force a search stage and the right answer is usually present and
+merely mis-ranked. Which stage limits you has to be measured per channel.
+
+Two caveats on those numbers: 17 of 80 sampled moments were lost to provider
+`503`s, which is load rather than anything about the moments, and this subsample
+is a little kinder to search at depth than the full set (hit@10 60.3% here
+against 48.1% over all 339).
+
+`--misses` lists what search put outside the top three, worst first; that list is
+usually a better argument for rewriting a description than any opinion about it.
 
 What it cannot tell you: that a session chose a skill does not make it the right
 skill. A miss can be the retriever failing or the original choice being poor, and
