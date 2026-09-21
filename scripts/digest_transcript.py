@@ -41,7 +41,8 @@ import sys
 USER_CAP = 6000
 ASSISTANT_CAP = 1800
 ERROR_CAP = 400
-TOTAL_CAP = int(os.environ.get("RECALL_DIGEST_TOTAL_CAP", 320 * 1024))
+TOTAL_CAP = int(os.environ.get("RECALL_DIGEST_TOTAL_CAP")
+                or os.environ.get("OKWOW_DIGEST_TOTAL_CAP") or 320 * 1024)
 
 # Fraction of the session, measured from the end, whose assistant narration is
 # kept whole no matter what. The conclusion of a session is its highest-value

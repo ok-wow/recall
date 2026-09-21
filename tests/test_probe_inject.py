@@ -263,7 +263,10 @@ def build_probe_index() -> Path:
     p = subprocess.run(
         [sys.executable, str(BUILDER)], capture_output=True, text=True,
         env={**os.environ, "RECALL_HOME": str(home),
-             "RECALL_CATALOG_DIR": str(catalogs)},
+             "RECALL_CATALOG_DIR": str(catalogs),
+           # Pin the last unpinned path too, or every fixture corpus silently
+           # gains the real rules from ~/.claude/skills.
+           "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills")},
     )
     if p.returncode != 0:
         raise SystemExit(f"could not build the test probe index with {BUILDER}:\n"

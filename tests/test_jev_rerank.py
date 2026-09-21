@@ -117,6 +117,9 @@ def run(d: Path, *args: str, url: str | None = None, key: str | None = "test-key
         log: Path | None = None, extra: dict | None = None) -> tuple[int, str]:
     env = {**os.environ,
            "RECALL_CATALOG_DIR": str(d),
+           # Pin the last unpinned path too, or every fixture corpus silently
+           # gains the real rules from ~/.claude/skills.
+           "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
            "RECALL_PROBE_INDEX": str(d / "nonexistent-index.json"),
            "RECALL_SURFACED_LOG": str(log or d / "surfaced.jsonl"),
            # Short, so the retry cases do not stall the suite.
