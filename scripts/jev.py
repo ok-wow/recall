@@ -102,8 +102,12 @@ def score(question: str, lessons: Sequence[str]) -> list[float]:
             break
         except urllib.error.HTTPError as exc:
             reason = f"HTTP {exc.code}"
-            # 429 here means the gateway is busy, not that the request is wrong.
-            retryable = exc.code in (429, 500, 502, 503, 504)
+            # Everything here means "busy, try later", not "your request is
+            # wrong". 529 is the one that bites: it is the provider's overloaded
+            # code, it is not in anyone's default list because it is not in the
+            # HTTP standard, and this gateway returns it under load alongside
+            # 503 and 504. Observed all three in one evening.
+            retryable = exc.code in (408, 429, 500, 502, 503, 504, 529)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             reason = exc.__class__.__name__
             retryable = True
