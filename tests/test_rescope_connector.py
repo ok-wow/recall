@@ -54,6 +54,10 @@ def main() -> int:
         # once. A fake that still took a list of texts would be testing a call
         # shape the code no longer makes.
         rc.PACE = 0                      # no sleeping in tests
+        # The thin-text filter sits IN FRONT of every check below, and these
+        # fakes use short strings. Disable it here and test it on its own.
+        real_min_text = rc.MIN_TEXT
+        rc.MIN_TEXT = 0
 
         def fake(item, props):
             return {k: (0.9 if k in item else 0.1) for k in props}
@@ -95,6 +99,22 @@ def main() -> int:
         def clear(item, props):
             return {k: (0.80 if k == "team" else 0.10) for k in props}
         check("a clear win is kept", rc.rescope(["x"], classifier=clear) == ["team"])
+
+        # The filter itself: a record with no text must cost nothing. Scoring
+        # 1,224 such Linear records burned ~790,000 tokens on 2026-09-21.
+        rc.MIN_TEXT = real_min_text
+        spent = []
+
+        def counting(item, props):
+            spent.append(item)
+            return {k: 0.9 for k in props}
+        got = rc.rescope(["Triage · Tech Debt", "x", ""], classifier=counting)
+        check("a record with no text is unscoped", got == ["unscoped"] * 3, got)
+        check("and costs no model call", spent == [], spent)
+        got = rc.rescope(["this is team " + "and more detail about it " * 4],
+                         classifier=lambda i, p: {k: (0.9 if k == "team" else 0.1) for k in p})
+        check("a record above the floor is still scored", got == ["team"], got)
+        rc.MIN_TEXT = 0
 
         # A transient failure must be retried, not turned into a wrong label.
         calls = [0]

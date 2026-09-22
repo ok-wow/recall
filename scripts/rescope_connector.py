@@ -82,6 +82,10 @@ PACE = float(os.environ.get("RECALL_SCOPE_PACE") or 0.35)
 # low: they exist to reject noise, not to second-guess a real decision.
 MIN_SCORE = float(os.environ.get("RECALL_SCOPE_MIN") or 0.15)
 MIN_GAP = float(os.environ.get("RECALL_SCOPE_GAP") or 0.08)
+# Below this there is nothing to score. Measured: the shortest text that ever
+# produced a confident scope in the labelled set was 162 chars; "Triage · Tech
+# Debt" is 19.
+MIN_TEXT = int(os.environ.get("RECALL_SCOPE_MIN_TEXT") or 60)
 
 
 def load_key(env_path: Path = None) -> None:
@@ -122,6 +126,13 @@ def rescope(texts: list[str], classifier=None) -> list[str]:
 
     out = []
     for i, text in enumerate(texts):
+        # Rule 5, filter before you spend. Scoring 2,605 Linear records on
+        # 2026-09-21 cost 1,674,050 tokens, and ~790,000 of those went on 1,224
+        # records whose entire text was "Triage · Tech Debt". A model cannot
+        # find a scope in text that carries none, and a length check is free.
+        if len(text.strip()) < MIN_TEXT:
+            out.append("unscoped")
+            continue
         for attempt in range(1, 6):
             try:
                 per = classifier(text, SCOPE_Q)
@@ -165,11 +176,18 @@ def main() -> int:
     import connector_index as ci
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if not args:
-        sys.stderr.write("usage: rescope_connector.py <source> [--apply]\n")
+        sys.stderr.write("usage: rescope_connector.py <source> [--from-index] [--apply]\n")
         return 2
     source, apply = args[0], "--apply" in sys.argv
     load_key()
-    summaries = read_summaries()
+    if "--from-index" in sys.argv:
+        # Re-label what is already stored, using the CURRENT questions. Nothing
+        # is fetched, so the gist step below is a no-op and the labels are the
+        # only thing that moves.
+        summaries = {r["id"]: f"{r.get('title','')}. {r.get('gist','')}".strip()
+                     for r in ci.read(source)}
+    else:
+        summaries = read_summaries()
     existing = {r["id"]: r for r in ci.read(source)}
     missing = [i for i in summaries if i not in existing]
     if missing:
