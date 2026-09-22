@@ -64,7 +64,7 @@ def today() -> str:
     return (os.environ.get("RECALL_TODAY") or date.today().isoformat()).replace("-", "_")
 
 
-def dump_field(key: str, value: str, indent: str = "  ") -> str:
+def dump_field(key: str, value: str, indent: str) -> str:
     """The field as PyYAML itself would write it, at the entry's indent.
 
     Hand-quoting is how a note containing a colon, a backtick or an apostrophe
@@ -76,37 +76,57 @@ def dump_field(key: str, value: str, indent: str = "  ") -> str:
                    for ln in block.splitlines(keepends=True))
 
 
-def entry_span(text: str, eid: str) -> tuple[int, int, int]:
-    """(start, end, end-of-id-line) for the entry whose id is eid."""
-    # Two spellings live in the same file: `  id:` when the id is not the
-    # item's first key, and `- id:` when it is. Matching only the first
-    # silently refuses the second group -- 26 entries here.
-    # Searched against a leading sentinel newline. Every marker below begins
-    # with one, and the FIRST entry in a file has no newline before it -- so
-    # without the sentinel, entry number one is unreachable and the script
-    # reports "entry not found" for a row that is plainly there.
+def entry_span(text: str, eid: str) -> tuple[int, int, int, str]:
+    """(start, end, end-of-id-line, field_indent) for the entry whose id is eid.
+
+    Three shapes live in this corpus and all three are load-bearing:
+
+        - id: x        substrate catalogs, id is the item's own first key
+          id: x        substrate catalogs, id further down the item
+          - id: x      every skill rules.yaml, under a `rules:` mapping
+
+    The third was unreachable until 2026-09-22 because the markers and the item
+    boundary were both pinned to column zero. That silently excluded 204 rules
+    across okwow-doctrine, -agent-patterns, -harness-discipline, -diagram-style
+    and -scrollytelling-craft, so every recurrence on them was hand-written --
+    which is how a bare counter with no date gets created, the exact thing this
+    script exists to prevent.
+
+    Searched against a leading sentinel newline. Every marker begins with one,
+    and the FIRST entry in a file has none before it -- so without the sentinel,
+    entry number one is unreachable and the script reports "entry not found"
+    for a row that is plainly there.
+    """
     hay = "\n" + text
-    at, first_key = -1, False
-    for marker, is_first in ((f"\n  id: {eid}\n", False), (f"\n- id: {eid}\n", True)):
-        at = hay.find(marker)
-        if at >= 0:
-            first_key = is_first
-            break
-    if at < 0:
-        raise SystemExit(f"entry not found: {eid}")
+    # id as the item's own first key, at any indent: `<I>- id: eid`
+    m = re.search(rf"\n( *)-( +)id: {re.escape(eid)} *(?:\n|$)", hay)
+    if m:
+        marker_indent = m.group(1)
+        field_indent = marker_indent + " " + m.group(2)   # under the `- `
+        at, first_key = m.start(), True
+    else:
+        # id further down the item: `<F>id: eid`, marker is two columns left
+        m = re.search(rf"\n( *)id: {re.escape(eid)} *(?:\n|$)", hay)
+        if not m:
+            raise SystemExit(f"entry not found: {eid}")
+        field_indent = m.group(1)
+        marker_indent = field_indent[:-2]
+        at, first_key = m.start(), False
+
+    item = f"\n{marker_indent}- "
     # With `- id:` the id IS the item marker, so the entry begins there.
-    # Searching backwards for the previous "- " would land inside the entry
+    # Searching backwards for the previous item would land inside the entry
     # BEFORE this one and edit that instead -- not hypothetical, the
     # one-change assertion caught it doing exactly that.
-    start = at + 1 if first_key else hay.rfind("\n- ", 0, at) + 1
-    nxt = hay.find("\n- ", at + 1)           # from AFTER our own marker
+    start = at + 1 if first_key else hay.rfind(item, 0, at) + 1
+    nxt = hay.find(item, at + 1)             # from AFTER our own marker
     end = nxt + 1 if nxt > 0 else len(hay)
     id_line_end = hay.find("\n", at + 1) + 1
-    return start - 1, end - 1, id_line_end - 1
+    return start - 1, end - 1, id_line_end - 1, field_indent
 
 
 def bump(text: str, eid: str, note: str) -> str:
-    start, end, id_end = entry_span(text, eid)
+    start, end, id_end, ind = entry_span(text, eid)
     body = text[start:end]
     key = f"recurrence_{today()}"
 
@@ -116,25 +136,29 @@ def bump(text: str, eid: str, note: str) -> str:
         n = int(m.group(2))
         body = body[:m.start()] + f"{m.group(1)}recurrences: {n + 1}" + body[m.end():]
     else:
-        body = body[:id_end - start] + "  recurrences: 1\n" + body[id_end - start:]
+        body = body[:id_end - start] + f"{ind}recurrences: 1\n" + body[id_end - start:]
 
     # Same day, second failure. Appending rather than replacing keeps both; a
     # writer that clobbers turns a second event into no event at all.
-    if re.search(rf"^  {key}:", body, re.M):
+    if re.search(rf"^{ind}{key}:", body, re.M):
         # The span is one whole list item, so it parses as a one-item list.
-        prev = str(yaml.load(body, DupCatch)[0].get(key, "")).strip()
+        # The span is one whole list item. At a non-zero indent it is not
+        # valid YAML on its own, so dedent it to column zero to read it back.
+        flat = "".join(ln[len(ind) - 2:] if ln.startswith(ind[:-2]) else ln
+                       for ln in body.splitlines(keepends=True)) if ind != "  " else body
+        prev = str(yaml.load(flat, DupCatch)[0].get(key, "")).strip()
         note = f"{prev}\n\n{note}" if prev else note
-        lo, hi = _field_span(body, key)
-        body = body[:lo] + dump_field(key, note) + body[hi:]
+        lo, hi = _field_span(body, key, ind)
+        body = body[:lo] + dump_field(key, note, ind) + body[hi:]
     else:
         ins = id_end - start
-        body = body[:ins] + dump_field(key, note) + body[ins:]
+        body = body[:ins] + dump_field(key, note, ind) + body[ins:]
     return text[:start] + body + text[end:]
 
 
-def _field_span(body: str, key: str) -> tuple[int, int]:
-    """Span of `  key: ...` including any continuation lines."""
-    k = body.find(f"\n  {key}:")
+def _field_span(body: str, key: str, ind: str) -> tuple[int, int]:
+    """Span of `<ind>key: ...` including any continuation lines."""
+    k = body.find(f"\n{ind}{key}:")
     if k < 0:
         raise SystemExit(f"field {key!r} vanished mid-edit — refusing")
     k += 1
@@ -142,10 +166,31 @@ def _field_span(body: str, key: str) -> tuple[int, int]:
     nl = rest.find("\n")
     off = 0
     for line in rest[nl:].splitlines(keepends=True):
-        if line.startswith("  ") and not line.startswith("   ") and ":" in line and off:
+        # A sibling field sits at exactly `ind`; a continuation sits deeper.
+        if (line.startswith(ind) and not line.startswith(ind + " ")
+                and ":" in line and off):
             break
         off += len(line)
     return k, k + nl + off
+
+
+def entries(doc) -> list:
+    """The list of entries, whichever shape the file wraps them in.
+
+    A substrate catalog IS the list. A skill rules.yaml is a mapping with one
+    list under `rules:`. Guarding on the shape here keeps every assertion below
+    -- entry count, exactly-one-change, counter+1 -- working for both.
+    """
+    if isinstance(doc, list):
+        return doc
+    if isinstance(doc, dict):
+        lists = [v for v in doc.values()
+                 if isinstance(v, list) and v and isinstance(v[0], dict)]
+        if len(lists) == 1:
+            return lists[0]
+        raise SystemExit(f"cannot find one entry list in a mapping with "
+                         f"{len(lists)} candidate(s) — refusing")
+    raise SystemExit(f"unsupported top-level {type(doc).__name__} — refusing")
 
 
 def main() -> int:
@@ -159,9 +204,9 @@ def main() -> int:
 
     p = Path(path)
     text = p.read_text()
-    before = yaml.load(text, DupCatch)
+    before = entries(yaml.load(text, DupCatch))
     patched = bump(text, eid, note)
-    after = yaml.load(patched, DupCatch)      # rejects a duplicate key outright
+    after = entries(yaml.load(patched, DupCatch))   # rejects a duplicate key
 
     # Everything below is the guard, and the guard is the point. A surgical
     # edit that writes to the wrong entry looks exactly like a correct one
