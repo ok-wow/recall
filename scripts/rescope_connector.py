@@ -63,8 +63,16 @@ SCOPE_Q = {
             "and release scope. The team needs this knowledge to build the "
             "product.",
     "preference": "The work habits of one person, or advice given to one person.",
-    "personal": "The private life of a person. Health, employment status, pay, "
-                "family, and social life. Not the work.",
+    # "Not the work" was too weak a discriminator on its own. It sent 7 Linear
+    # tickets to personal on 2026-09-22 -- "Remove last name from the profile",
+    # "AI hallucinating user details", even "Setup sentry" -- because a ticket
+    # ABOUT handling personal data reads as personal. The subject has to be a
+    # real individual's own life, not a feature that touches names. Note also
+    # that these four openings stay distinct on purpose: axes that share an
+    # opening collapse into one (okwow-jev rule 3).
+    "personal": "One individual's own private life. Their health, their money, "
+                "their pay, their family, their home, whether they keep their "
+                "job.",
 }
 # 201 candidates in one request returned HTTP 503. 40 goes through; the gateway's
 # limit is payload size, not rate, so smaller batches beat longer sleeps.
@@ -88,7 +96,30 @@ def load_key(env_path: Path = None) -> None:
 
 
 def rescope(texts: list[str], scorer=None) -> list[str]:
-    """One scope per text. Batched, with backoff, because the gateway 503s."""
+    """One scope per text. Batched, with backoff, because the gateway 503s.
+
+    KNOWN DEFECT, measured 2026-09-22 and not yet fixed. `jev.score` is a
+    RERANKER: it puts every candidate in `state.lessons` together and scores
+    them against one hardcoded proposition, so an item's number is conditioned
+    on its neighbours in that call. The MIN_SCORE/MIN_GAP floors below then
+    read a per-call scale as if it were absolute, and at BATCH=40 a 2,605-record
+    run is 66 different scales judged by one threshold.
+
+    Observed: `linear:PRODUCT-2488` came out `personal` in a batch of 7 similar
+    thin tickets, and `unscoped` 3/3 times in a batch holding 4 diverse
+    controls. Same text, same questions, different neighbours. Adding fixed
+    anchor candidates to every call was tried and did not fix it (1/3 stable) --
+    anchors dilute differently at different batch sizes.
+
+    The real fix is okwow-jev rule 1: build the classify request directly, one
+    proposition per scope in `questions`, the item alone in `state`. That scores
+    each item independently and removes the batch entirely. It is a bigger
+    change than a patch here, and re-labelling the 3,104 records already in the
+    index is a separate decision.
+
+    Until then: a label out of this function is a hint, not a measurement, and
+    `unscoped` is the only answer it gives reliably.
+    """
     if not texts:
         return []
     if scorer is None:
