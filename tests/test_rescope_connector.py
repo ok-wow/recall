@@ -153,6 +153,50 @@ def main() -> int:
         check("stdin jsonl form parses, gist is a fallback for summary",
               rc.read_summaries() == {"fathom:2": "x", "fathom:3": "y"})
 
+    # ---- --from-index must never rewrite a gist -------------------------
+    # The mode builds its "summary" from the record's OWN title and gist, so
+    # writing that back prepends the title and pushes real content off the
+    # 400-char end. Fixed once on 2026-09-22 in the caller, then reintroduced
+    # through this path the same day on 447 of 486 records, because nothing
+    # here was watching. This is the thing watching.
+    import subprocess
+    d = Path(tempfile.mkdtemp(prefix="rescope-fromindex-"))
+    os.environ["RECALL_CONNECTOR_DIR"] = str(d)
+    importlib.reload(ci)
+    ci.upsert("fathom", [{
+        "id": "fathom:9", "source": "fathom", "title": "Design Review",
+        "gist": "The vault listing takes the panel width and Spaces trades filters for Upload.",
+        "date": "2026-03-04", "url": "https://fathom.video/calls/9", "scope": "team",
+    }])
+    before = ci.read("fathom")[0]["gist"]
+
+    stub = d / "fakejev.py"
+    stub.write_text(
+        "def classify(item, props):\n"
+        "    return {k: (0.9 if k == 'organization' else 0.1) for k in props}\n")
+    runner = d / "go.py"
+    runner.write_text(
+        "import sys\n"
+        f"sys.path.insert(0, {str(HERE.parent / 'scripts')!r})\n"
+        f"sys.path.insert(0, {str(d)!r})\n"
+        "import fakejev, rescope_connector as rc\n"
+        "rc.PACE = 0\n"
+        "import jev; jev.classify = fakejev.classify\n"
+        "sys.argv = ['rescope_connector.py', 'fathom', '--from-index', '--apply']\n"
+        "raise SystemExit(rc.main())\n")
+    r = subprocess.run([sys.executable, str(runner)], capture_output=True, text=True,
+                       env={**os.environ, "RECALL_CONNECTOR_DIR": str(d),
+                            "AI_GATEWAY_API_KEY": "test"})
+    after = ci.read("fathom")[0]
+    check("--from-index runs", r.returncode == 0, (r.stdout + r.stderr)[-200:])
+    check("--from-index leaves the gist exactly as it was",
+          after["gist"] == before, after["gist"][:70])
+    check("the gist does not gain its own title",
+          not after["gist"].startswith("Design Review"), after["gist"][:40])
+    check("--from-index still moves the scope",
+          after["scope"] == "organization", after["scope"])
+
+
     print()
     if fails:
         print(f"FAIL — {len(fails)}/{ran[0]} checks red: {', '.join(fails)}")

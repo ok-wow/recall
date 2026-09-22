@@ -180,7 +180,8 @@ def main() -> int:
         return 2
     source, apply = args[0], "--apply" in sys.argv
     load_key()
-    if "--from-index" in sys.argv:
+    from_index = "--from-index" in sys.argv
+    if from_index:
         # Re-label what is already stored, using the CURRENT questions. Nothing
         # is fetched, so the gist step below is a no-op and the labels are the
         # only thing that moves.
@@ -197,10 +198,29 @@ def main() -> int:
     if not ids:
         sys.stderr.write("rescope_connector: nothing to do\n")
         return 1
-    scopes = rescope([summaries[i] for i in ids])
-
     import connector_index as _ci
     changed, held, out, regist, toolong = [], 0, [], 0, 0
+
+    # Score and WRITE in chunks. The first version scored every record and
+    # upserted once at the end, so a failure at record 2,400 of 2,469 threw
+    # away forty minutes of paid scoring -- the same shape as the Fathom
+    # backfill losing 70 meetings to one 429. A chunk is cheap to redo.
+    CHUNK = 50
+    scopes = []
+    for c in range(0, len(ids), CHUNK):
+        part = ids[c:c + CHUNK]
+        got = rescope([summaries[i] for i in part])
+        scopes.extend(got)
+        if apply:
+            flush = []
+            for i, new_scope in zip(part, got):
+                if new_scope != (existing[i].get("scope") or "unscoped"):
+                    flush.append(dict(existing[i], scope=new_scope))
+            if flush:
+                ci.upsert(source, flush)
+        print(f"  {min(c + CHUNK, len(ids))}/{len(ids)} scored"
+              + (" (written)" if apply else ""), flush=True)
+
     for i, new in zip(ids, scopes):
         old = existing[i].get("scope") or "unscoped"
         rec = dict(existing[i])
@@ -215,7 +235,15 @@ def main() -> int:
         # "Meeting, no listed invitees" on a record whose summary held the whole
         # pricing decision. Store the supplied text as the gist when it fits.
         text = summaries[i]
-        if len(text) <= _ci.GIST_CAP and text != rec.get("gist"):
+        # In --from-index mode the "summary" was BUILT from the record's own
+        # title and gist, so writing it back prepends the title to the gist and
+        # pushes real content off the 400-char end. That defect was fixed once
+        # on 2026-09-22 in the caller and came straight back through this path
+        # a few hours later, on 447 of 486 fathom records. The rewrite only
+        # makes sense when the text came from OUTSIDE the index.
+        if from_index:
+            pass
+        elif len(text) <= _ci.GIST_CAP and text != rec.get("gist"):
             rec["gist"] = text
             regist += 1
         elif len(text) > _ci.GIST_CAP:
