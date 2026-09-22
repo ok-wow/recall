@@ -117,15 +117,20 @@ def main() -> int:
         check("a corrupt line is skipped, the rest still read",
               len(ci.read("slack")) == 2)
 
-        # --- personal scope drops names, structurally --------------------
+        # --- scope labels, it does not redact ----------------------------
+        # Clearing `people` on a personal record was measured and did not
+        # redact: 7 of 10 such records still named someone in their title or
+        # gist, while the routing value was gone. Privacy here is an egress
+        # rule, not a schema one -- so every scope keeps its names.
         v = ci.validate(rec(scope="personal", people=["A Person", "Another"]))
-        check("a personal record keeps no participant names", v["people"] == [], v["people"])
+        check("a personal record keeps its participant names",
+              v["people"] == ["A Person", "Another"], v["people"])
         v = ci.validate(rec(scope="team", people=["A Person"]))
         check("a non-personal record keeps them", v["people"] == ["A Person"], v["people"])
         ci.upsert("slack", [rec(id="slack:p1", scope="personal", people=["X"])])
         got = [r for r in ci.read("slack") if r["id"] == "slack:p1"][0]
-        check("and the names are absent on disk, not just in memory",
-              got.get("people") == [], got.get("people"))
+        check("and they survive the round trip to disk",
+              got.get("people") == ["X"], got.get("people"))
 
         # --- isolation: sources are separate files -----------------------
         ci.upsert("gmail", [rec(id="gmail:abc", source="gmail",

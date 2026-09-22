@@ -93,14 +93,18 @@ def validate(rec: dict) -> dict:
     out = dict(rec)
     out["scope"] = scope
     out["gist"] = gist
-    # A personal record's value is "a private conversation happened here, go
-    # look" -- and who was in it is the sensitive half. Redacting the gist by
-    # hand while leaving the names in `people` is redaction theatre: the store
-    # is searchable, so the name is still an answer to a query. Dropping them
-    # is structural so it cannot be forgotten on a record written at speed.
-    if scope == "personal":
-        rec = dict(rec, people=[])
-    people = [] if scope == "personal" else out.get("people")
+    # Scope labels; it does not redact. An earlier version cleared `people` on a
+    # personal record, and on 2026-09-22 that was counted: of the 10 personal
+    # records in the store, 7 still carried a full name in their title or gist.
+    # The name was still an answer to a query, and what the clearing actually
+    # removed was the routing value -- who was in the room -- which is the whole
+    # reason an organization indexes its own meetings.
+    #
+    # The store is local and private. The leak that really happened was a
+    # personal record QUOTED into a progress report, which is an egress rule
+    # (okwow-doctrine: a-personal-record-can-be-found-and-never-quoted) and
+    # cannot be enforced here.
+    people = out.get("people")
     out["people"] = [str(p) for p in people] if isinstance(people, list) else []
     return out
 
