@@ -518,6 +518,12 @@ def load_orphans(broken: list[dict]) -> list[dict]:
     for o in (doc.get("orphans") or []):
         if not isinstance(o, dict):
             continue
+        # Only a PARKED orphan is unhomed. A promoted one lives at promoted_to,
+        # often corrected on the way: of 17 code facts promoted on 2026-09-22,
+        # 9 changed and 2 were false ("the backend has no MCP client"). Indexing
+        # the parked text would keep serving the version that was fixed.
+        if str(o.get("status") or "parked") != "parked":
+            continue
         oid = str(o.get("id") or o.get("name") or "")
         if not oid:
             continue
