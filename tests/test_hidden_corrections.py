@@ -113,6 +113,10 @@ def run(d: Path, *args: str, surfaced_log: str | None = None) -> tuple[int, str]
            # gains the real rules from ~/.claude/skills.
            "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
            "RECALL_PROBE_INDEX": str(d / "nonexistent-index.json"),
+           # Every corpus recall can read has to be pinned, or a loader
+           # added later silently pulls a real store into a fixture test.
+           "RECALL_RECEIPT_DIR": str(d / "none-receipts"),
+           "RECALL_ORPHAN_INDEX": str(d / "none-orphans.yaml"),
            "RECALL_SURFACED_LOG": surfaced_log or str(d / "surfaced.jsonl")}
     p = subprocess.run([sys.executable, str(RECALL), *args],
                        capture_output=True, text=True, env=env)
@@ -218,6 +222,10 @@ def main() -> int:
            # Pin the last unpinned path too, or every fixture corpus silently
            # gains the real rules from ~/.claude/skills.
            "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
+           # Every corpus recall can read has to be pinned, or a loader
+           # added later silently pulls a real store into a fixture test.
+           "RECALL_RECEIPT_DIR": str(d / "none-receipts"),
+           "RECALL_ORPHAN_INDEX": str(d / "none-orphans.yaml"),
            "RECALL_SURFACED_LOG": str(plog), "RECALL_HOME": str(d / "fake-home")}
     subprocess.run([sys.executable, str(RECALL), "--hidden"],
                    capture_output=True, text=True, env=env)

@@ -129,6 +129,8 @@ def run(d: Path, *args: str, url: str | None = None, key: str | None = "test-key
            "RECALL_SPECS_INDEX": str(d / "nonexistent-specs.txt"),
            "RECALL_HUB_INDEX": str(d / "nonexistent-hub.json"),
            "RECALL_CONNECTOR_DIR": str(d / "nonexistent-connectors"),
+           "RECALL_RECEIPT_DIR": str(d / "nonexistent-receipts"),
+           "RECALL_ORPHAN_INDEX": str(d / "nonexistent-orphans.yaml"),
            "RECALL_PROBE_INDEX": str(d / "nonexistent-index.json"),
            "RECALL_SURFACED_LOG": str(log or d / "surfaced.jsonl"),
            # Short, so the retry cases do not stall the suite.
