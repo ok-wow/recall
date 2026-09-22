@@ -55,6 +55,13 @@ GIST_CAP = 400
 BODY_FIELDS = frozenset({"body", "text", "content", "message", "transcript",
                          "raw", "full_text", "messages", "thread"})
 SOURCE_OK = re.compile(r"^[a-z][a-z0-9_-]{1,30}$")
+# Scope is a LABEL, not a gate. The first design dropped anything the privacy
+# axis flagged, which throws away a real record because of who it is about --
+# "we agreed Alex owns onboarding" is organizational and also about a person.
+# Labelling keeps it and lets the reader decide, and it is the taxonomy the
+# compound router already uses: personal preference stays in the private store,
+# team doctrine is shared, organization facts are the company's.
+SCOPES = ("organization", "team", "preference", "personal", "unscoped")
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
 
@@ -77,10 +84,14 @@ def validate(rec: dict) -> dict:
         raise RecordRejected(
             f"field(s) {', '.join(leaked)} would store a body; put a <={GIST_CAP} "
             "char summary in `gist` and leave the body in the source app")
+    scope = str(rec.get("scope") or "unscoped").strip().lower()
+    if scope not in SCOPES:
+        raise RecordRejected(f"scope {scope!r} is not one of {', '.join(SCOPES)}")
     gist = " ".join(str(rec.get("gist") or "").split())
     if len(gist) > GIST_CAP:
         raise RecordRejected(f"gist is {len(gist)} chars, cap is {GIST_CAP}")
     out = dict(rec)
+    out["scope"] = scope
     out["gist"] = gist
     people = out.get("people")
     out["people"] = [str(p) for p in people] if isinstance(people, list) else []

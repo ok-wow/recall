@@ -457,7 +457,11 @@ def load_connectors(broken: list[dict]) -> list[dict]:
                 "is_connector": True,
                 "raw": {"id": r["id"], "title": title, "summary": gist or title,
                         "spec_status": str(r.get("where") or ""),
-                        "doc_type": source, "updated": str(r.get("date") or "")[:10],
+                        # scope rides in doc_type so the existing spec/hub
+                        # rendering prints it without a second code path.
+                        "doc_type": f"{source} · {r['scope']}" if r.get("scope")
+                                    and r["scope"] != "unscoped" else source,
+                        "updated": str(r.get("date") or "")[:10],
                         "spec_path": str(r.get("url") or "")},
                 # People are indexed: "what did Zachary say about X" is the
                 # question a thread index answers and a spec index cannot.
