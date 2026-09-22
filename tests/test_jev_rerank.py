@@ -117,9 +117,18 @@ def run(d: Path, *args: str, url: str | None = None, key: str | None = "test-key
         log: Path | None = None, extra: dict | None = None) -> tuple[int, str]:
     env = {**os.environ,
            "RECALL_CATALOG_DIR": str(d),
-           # Pin the last unpinned path too, or every fixture corpus silently
-           # gains the real rules from ~/.claude/skills.
+           # Pin EVERY corpus path. "The last unpinned one" was wrong twice:
+           # each new source defaults to a real location under $HOME, and an
+           # unpinned one does not fail loudly -- it quietly enlarges the
+           # fixture. RECALL_SPECS_INDEX went in on 2026-09-21 and put 159 real
+           # specs into 5-entry corpora, reddening 7 checks across two suites.
+           # The "--stats counts every entry" check is the structural guard:
+           # it compares the fixture's own entry count against what recall
+           # reports, so it reddens the moment any source leaks in.
            "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
+           "RECALL_SPECS_INDEX": str(d / "nonexistent-specs.txt"),
+           "RECALL_HUB_INDEX": str(d / "nonexistent-hub.json"),
+           "RECALL_CONNECTOR_DIR": str(d / "nonexistent-connectors"),
            "RECALL_PROBE_INDEX": str(d / "nonexistent-index.json"),
            "RECALL_SURFACED_LOG": str(log or d / "surfaced.jsonl"),
            # Short, so the retry cases do not stall the suite.

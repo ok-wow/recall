@@ -79,9 +79,18 @@ def run(d: Path, *args: str, probe_index: str | None = None,
     # published retrieval evidence fixtures. `surfaced_log` defaults INTO the temp
     # dir so a caller cannot forget it.
     env = {**os.environ, "RECALL_CATALOG_DIR": str(d),
-           # Pin the last unpinned path too, or every fixture corpus silently
-           # gains the real rules from ~/.claude/skills.
+           # Pin EVERY corpus path. "The last unpinned one" was wrong twice:
+           # each new source defaults to a real location under $HOME, and an
+           # unpinned one does not fail loudly -- it quietly enlarges the
+           # fixture. RECALL_SPECS_INDEX went in on 2026-09-21 and put 159 real
+           # specs into 5-entry corpora, reddening 7 checks across two suites.
+           # The "--stats counts every entry" check is the structural guard:
+           # it compares the fixture's own entry count against what recall
+           # reports, so it reddens the moment any source leaks in.
            "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
+           "RECALL_SPECS_INDEX": str(d / "nonexistent-specs.txt"),
+           "RECALL_HUB_INDEX": str(d / "nonexistent-hub.json"),
+           "RECALL_CONNECTOR_DIR": str(d / "nonexistent-connectors"),
            "RECALL_PROBE_INDEX": probe_index or str(d / "nonexistent-index.json"),
            "RECALL_SURFACED_LOG": surfaced_log or str(d / "surfaced.jsonl")}
     p = subprocess.run([sys.executable, str(RECALL), *args],
@@ -253,10 +262,22 @@ def main() -> int:
     # directions. Assert the override is honoured, not merely available.
     prod = d / "must-never-be-written.jsonl"
     env_probe = {**os.environ, "RECALL_CATALOG_DIR": str(d),
-           # Pin the last unpinned path too, or every fixture corpus silently
-           # gains the real rules from ~/.claude/skills.
+           # Pin EVERY corpus path. "The last unpinned one" was wrong twice:
+           # each new source defaults to a real location under $HOME, and an
+           # unpinned one does not fail loudly -- it quietly enlarges the
+           # fixture. RECALL_SPECS_INDEX went in on 2026-09-21 and put 159 real
+           # specs into 5-entry corpora, reddening 7 checks across two suites.
+           # The "--stats counts every entry" check is the structural guard:
+           # it compares the fixture's own entry count against what recall
+           # reports, so it reddens the moment any source leaks in.
            "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
-                 "RECALL_SURFACED_LOG": str(plog), "RECALL_HOME": str(d / "fake-home")}
+           "RECALL_SPECS_INDEX": str(d / "nonexistent-specs.txt"),
+           "RECALL_HUB_INDEX": str(d / "nonexistent-hub.json"),
+           "RECALL_CONNECTOR_DIR": str(d / "nonexistent-connectors"),
+                 "RECALL_SURFACED_LOG": str(plog), "RECALL_HOME": str(d / "fake-home"),
+                 "RECALL_SPECS_INDEX": str(d / "nonexistent-specs.txt"),
+           "RECALL_HUB_INDEX": str(d / "nonexistent-hub.json"),
+           "RECALL_CONNECTOR_DIR": str(d / "nonexistent-connectors")}
     subprocess.run([sys.executable, str(RECALL), "anything"],
                    capture_output=True, text=True, env=env_probe)
     check("an overridden log means production is never touched",
