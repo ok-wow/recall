@@ -141,6 +141,37 @@ def main() -> int:
         check("and does not disturb the first", len(ci.read("slack")) == 3,
               len(ci.read("slack")))
 
+        # --- suppression: removed means removed, including on re-sync ----
+        # The owner removes a record; the next sync fetches it again. Hiding it
+        # in one reader would not survive that, so every path checks the list.
+        ci.upsert("fathom", [rec(id="fathom:1", source="fathom", title="Keep"),
+                             rec(id="fathom:2", source="fathom", title="Remove me")])
+        gone = ci.suppress("fathom", ["fathom:2"], "personal-finance", "2026-09-22")
+        check("suppress returns the removed record for safekeeping",
+              [r["id"] for r in gone] == ["fathom:2"], gone)
+        check("the record is gone from the file on disk",
+              "fathom:2" not in ci.path_for("fathom").read_text())
+        check("the other record is untouched", [r["id"] for r in ci.read("fathom")] == ["fathom:1"])
+        r5 = ci.upsert("fathom", [rec(id="fathom:2", source="fathom", title="Remove me")])
+        check("a re-sync cannot bring it back",
+              r5["suppressed"] == 1 and "fathom:2" not in ci.path_for("fathom").read_text(), r5)
+        lst = (tmp / "fathom.suppressed").read_text()
+        check("the suppression list holds the id and a category, no content",
+              lst.strip() == "fathom:2\t2026-09-22\tpersonal-finance" and "Remove me" not in lst, lst)
+        ci.suppress("fathom", ["fathom:2"], "personal-finance", "2026-09-23")
+        check("suppressing twice does not duplicate the list entry",
+              (tmp / "fathom.suppressed").read_text().count("fathom:2") == 1)
+        p = ci.path_for("fathom")
+        p.write_text(p.read_text() + json.dumps(rec(id="fathom:2", source="fathom")) + "\n")
+        check("a record written around the index is still hidden on read",
+              "fathom:2" not in [r["id"] for r in ci.read("fathom")])
+        try:
+            ci.suppress("fathom", ["fathom:1"], "their mortgage call with the bank", "2026-09-22")
+            ok = False
+        except ci.RecordRejected:
+            ok = True
+        check("a reason that is text, not a category, is refused", ok)
+
         # --- the temp file never survives a write ------------------------
         check("no .tmp left behind", not list(tmp.glob("*.tmp")))
 

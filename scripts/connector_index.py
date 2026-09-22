@@ -115,10 +115,26 @@ def path_for(source: str) -> Path:
     return CONNECTOR_DIR / f"{source}.jsonl"
 
 
+def suppressed(source: str) -> set[str]:
+    """Ids the owner removed from this source, from `<source>.suppressed`.
+
+    One line per id: `id<TAB>date<TAB>reason`, where reason is a category, never
+    content. It lives here, in the shared module, because hiding a record in one
+    reader is not removing it: the next sync would write it straight back.
+    Every reader and writer below consults this list.
+    """
+    p = CONNECTOR_DIR / f"{source}.suppressed"
+    if not p.exists():
+        return set()
+    return {ln.split("\t", 1)[0].strip() for ln in p.read_text().splitlines()
+            if ln.strip() and not ln.startswith("#")}
+
+
 def read(source: str) -> list[dict]:
     p = path_for(source)
     if not p.exists():
         return []
+    gone = suppressed(source)
     out = []
     for line in p.read_text().splitlines():
         line = line.strip()
@@ -130,7 +146,7 @@ def read(source: str) -> list[dict]:
             # One corrupt line must not cost the whole source. A sync that
             # crashed mid-write is the likeliest cause and the rest is fine.
             continue
-        if isinstance(rec, dict) and rec.get("id"):
+        if isinstance(rec, dict) and rec.get("id") and rec["id"] not in gone:
             out.append(rec)
     return out
 
@@ -142,11 +158,15 @@ def upsert(source: str, records: list[dict]) -> dict:
     batch of 200 fails the batch instead of leaving the file half-updated.
     """
     clean = [validate(r) for r in records]
+    gone = suppressed(source)
     existing = {r["id"]: r for r in read(source)}
     order = [r["id"] for r in read(source)]
-    added = updated = unchanged = 0
+    added = updated = unchanged = refused = 0
     for r in clean:
         rid = r["id"]
+        if rid in gone:
+            refused += 1        # removed by the owner; a re-sync must not restore it
+            continue
         if rid not in existing:
             existing[rid] = r
             order.append(rid)
@@ -164,7 +184,46 @@ def upsert(source: str, records: list[dict]) -> dict:
                            for i in order))
     os.replace(tmp, p)          # atomic: readers never see a partial file
     return {"added": added, "updated": updated, "unchanged": unchanged,
-            "total": len(order)}
+            "suppressed": refused, "total": len(order)}
+
+
+def suppress(source: str, ids: list[str], reason: str, today: str) -> list[dict]:
+    """Remove records for good: list their ids, then rewrite the file without them.
+
+    Returns the removed records so the caller can move them somewhere
+    recoverable. The suppression list takes only ids and a reason category, so
+    the list itself holds nothing it was written to remove.
+    """
+    if not re.fullmatch(r"[a-z0-9-]{2,40}", reason):
+        raise RecordRejected(f"reason {reason!r} must be a short category slug, not text")
+    p = path_for(source)
+    lst = CONNECTOR_DIR / f"{source}.suppressed"
+    have = suppressed(source)
+    new = [i for i in dict.fromkeys(ids) if i not in have]
+    if new:
+        lst.parent.mkdir(parents=True, exist_ok=True)
+        with lst.open("a") as fh:
+            for i in new:
+                fh.write(f"{i}\t{today}\t{reason}\n")
+    if not p.exists():
+        return []
+    drop, kept, removed = set(ids), [], []
+    for line in p.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            kept.append(line)      # not ours to judge; leave a corrupt line as found
+            continue
+        if isinstance(rec, dict) and rec.get("id") in drop:
+            removed.append(rec)
+        else:
+            kept.append(line)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text("".join(ln + "\n" for ln in kept))
+    os.replace(tmp, p)
+    return removed
 
 
 def sources() -> list[str]:
