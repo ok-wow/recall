@@ -117,12 +117,24 @@ def main() -> int:
         check("a corrupt line is skipped, the rest still read",
               len(ci.read("slack")) == 2)
 
+        # --- personal scope drops names, structurally --------------------
+        v = ci.validate(rec(scope="personal", people=["A Person", "Another"]))
+        check("a personal record keeps no participant names", v["people"] == [], v["people"])
+        v = ci.validate(rec(scope="team", people=["A Person"]))
+        check("a non-personal record keeps them", v["people"] == ["A Person"], v["people"])
+        ci.upsert("slack", [rec(id="slack:p1", scope="personal", people=["X"])])
+        got = [r for r in ci.read("slack") if r["id"] == "slack:p1"][0]
+        check("and the names are absent on disk, not just in memory",
+              got.get("people") == [], got.get("people"))
+
         # --- isolation: sources are separate files -----------------------
         ci.upsert("gmail", [rec(id="gmail:abc", source="gmail",
                                 url="https://mail.google.com/x")])
         check("a second source writes its own file",
               sorted(ci.sources()) == ["gmail", "slack"], ci.sources())
-        check("and does not disturb the first", len(ci.read("slack")) == 2)
+        # 2 originals + the personal record written by the scope check above.
+        check("and does not disturb the first", len(ci.read("slack")) == 3,
+              len(ci.read("slack")))
 
         # --- the temp file never survives a write ------------------------
         check("no .tmp left behind", not list(tmp.glob("*.tmp")))

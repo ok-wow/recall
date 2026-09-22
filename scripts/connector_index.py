@@ -93,7 +93,14 @@ def validate(rec: dict) -> dict:
     out = dict(rec)
     out["scope"] = scope
     out["gist"] = gist
-    people = out.get("people")
+    # A personal record's value is "a private conversation happened here, go
+    # look" -- and who was in it is the sensitive half. Redacting the gist by
+    # hand while leaving the names in `people` is redaction theatre: the store
+    # is searchable, so the name is still an answer to a query. Dropping them
+    # is structural so it cannot be forgotten on a record written at speed.
+    if scope == "personal":
+        rec = dict(rec, people=[])
+    people = [] if scope == "personal" else out.get("people")
     out["people"] = [str(p) for p in people] if isinstance(people, list) else []
     return out
 

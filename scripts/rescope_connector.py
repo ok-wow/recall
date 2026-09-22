@@ -39,22 +39,40 @@ sys.path.insert(0, str(HERE))
 # Scope is about WHOSE KNOWLEDGE this is, not who was in the room. The first
 # wording described attendees, and a dry run caught it: an internal call that
 # settled pricing, usage caps and go-to-market scored `organization` — which is
-# correct under the taxonomy and wrong under the question, because nobody
-# external attended. A company decision is company knowledge whoever made it.
+# correct under the taxonomy and wrong under the question.
+#
+# Written in Strict ASD-STE100, because each of these terminates in a structured
+# answer and nothing else reads them. One constraint overrides STE's guidance on
+# consistent sentence structure, and it is not optional: EACH AXIS MUST OPEN ON
+# ITS OWN DISTINCTIVE NOUN. Measured 2026-09-21 over four validated records —
+#
+#   prose, distinct openings            4/4 correct, mean margin +0.302
+#   STE, all four opening "This record" 0/4 correct, mean margin +0.052
+#   STE, distinct openings              4/4 correct, mean margin +0.288
+#
+# The model scores how well a record matches a query's subject. Four queries
+# that share a first sentence read as one query, so the axes collapse and every
+# margin falls inside the gap guard. That is the same collapse the four-axis
+# classifier died of, arrived at from the opposite direction: there by putting
+# the axis text where it was never read, here by making the axes look alike.
 SCOPE_Q = {
-    "organization": "knowledge belonging to the whole company and outliving any "
-                    "team — pricing, positioning, fundraising, compliance, "
-                    "customer and vendor relationships, legal commitments",
-    "team": "knowledge about how this team builds — design decisions, "
-            "engineering plans, architecture, roadmap sequencing, release scope",
-    "preference": "how one particular person likes to work, or advice and "
-                  "mentoring directed at an individual",
-    "personal": "a private matter — someone's health, employment, family or "
-                "social life — rather than the work",
+    "organization": "Prices, positioning, fundraising, compliance, customer "
+                    "relations, vendor relations, and legal commitments. The "
+                    "whole company needs this knowledge.",
+    "team": "Design decisions, engineering plans, architecture, roadmap order, "
+            "and release scope. The team needs this knowledge to build the "
+            "product.",
+    "preference": "The work habits of one person, or advice given to one person.",
+    "personal": "The private life of a person. Health, employment status, pay, "
+                "family, and social life. Not the work.",
 }
 # 201 candidates in one request returned HTTP 503. 40 goes through; the gateway's
 # limit is payload size, not rate, so smaller batches beat longer sleeps.
 BATCH = 40
+# A scope needs to win, not merely come first. Both floors are deliberately
+# low: they exist to reject noise, not to second-guess a real decision.
+MIN_SCORE = float(os.environ.get("RECALL_SCOPE_MIN") or 0.15)
+MIN_GAP = float(os.environ.get("RECALL_SCOPE_GAP") or 0.08)
 
 
 def load_key(env_path: Path = None) -> None:
@@ -89,7 +107,22 @@ def rescope(texts: list[str], scorer=None) -> list[str]:
                         raise
                     time.sleep(3 * attempt)
             time.sleep(0.8)
-    return [max(SCOPE_Q, key=lambda k: cols[k][i]) for i in range(len(texts))]
+    # An argmax with no gap check reads noise as a decision. Measured
+    # 2026-09-21: 62 Linear records whose whole text was "Triage · Tech Debt"
+    # scored near zero on all four scopes, and the winner was whichever
+    # rounding went first -- they came out `personal`. This is the corpus's own
+    # floor rule ("at the floor the size of the gap is the signal, not its
+    # sign") applied where it was first ignored.
+    out = []
+    for i in range(len(texts)):
+        per = {k: cols[k][i] for k in SCOPE_Q}
+        rank = sorted(per.items(), key=lambda kv: -kv[1])
+        top, second = rank[0], rank[1]
+        if top[1] < MIN_SCORE or (top[1] - second[1]) < MIN_GAP:
+            out.append("unscoped")
+        else:
+            out.append(top[0])
+    return out
 
 
 def read_summaries() -> dict:

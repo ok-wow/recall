@@ -64,10 +64,22 @@ def main() -> int:
         check("batching preserves order",
               got[:55] == ["team"] * 55 and got[55:] == ["organization"] * 40)
 
-        # A tie must still resolve rather than crash — first scope in SCOPE_Q wins.
+        # A record nothing matches must come back unscoped, not be assigned the
+        # scope whose rounding happened to win.
         flat = rc.rescope(["nothing matches"], scorer=fake)
-        check("a flat score resolves to a scope, not an error",
-              flat and flat[0] in rc.SCOPE_Q, flat)
+        check("a record with no signal is unscoped, not guessed",
+              flat == ["unscoped"], flat)
+
+        def nearly_tied(question, texts):
+            k = Q2K[question]
+            return [0.42 if k == "team" else 0.40 for _ in texts]
+        check("a win inside the gap is unscoped",
+              rc.rescope(["x"], scorer=nearly_tied) == ["unscoped"])
+
+        def clear(question, texts):
+            k = Q2K[question]
+            return [0.80 if k == "team" else 0.10 for _ in texts]
+        check("a clear win is kept", rc.rescope(["x"], scorer=clear) == ["team"])
 
         # Dry run must not touch the store. This is the safety property.
         before = ci.path_for("fathom").read_text()
