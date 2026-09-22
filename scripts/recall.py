@@ -411,6 +411,25 @@ def load_hub(broken: list[dict]) -> list[dict]:
     return out
 
 
+# A loader's `except Exception` cannot tell "this file is malformed" from "this
+# code is broken", and it reports both as the first. Flagged 2026-09-22 by a
+# parallel session reading a NameError as a parse failure: the message blamed
+# the receipts for a missing import. The data case is recoverable and expected
+# -- one corrupt file must not cost the other 265. A programming error is
+# neither, and saying so in the message is the difference between fixing a file
+# and fixing the reader.
+DATA_ERRORS = (ValueError, UnicodeDecodeError, OSError, KeyError, TypeError,
+               AttributeError)
+
+
+def why_broken(exc: Exception) -> str:
+    """The error line, marked when the cause is this code rather than the file."""
+    first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+    if isinstance(exc, (NameError, ImportError, IndentationError, SyntaxError)):
+        return f"BUG IN RECALL, not in this file — {exc.__class__.__name__}: {first}"
+    return first
+
+
 def load_receipts(broken: list[dict]) -> list[dict]:
     """Index the local learning receipts -- the working notes, not the verdicts.
 
@@ -471,8 +490,8 @@ def load_receipts(broken: list[dict]) -> list[dict]:
                         json.dumps(d, ensure_ascii=False, default=str),
                         str(d.get("captured_at") or "")[:10], item)
         except Exception as exc:
-            first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
-            broken.append({"catalog": "RECEIPT", "path": str(item), "error": first})
+            broken.append({"catalog": "RECEIPT", "path": str(item),
+                           "error": why_broken(exc)})
     return out
 
 
@@ -492,8 +511,8 @@ def load_orphans(broken: list[dict]) -> list[dict]:
     try:
         doc = yaml.safe_load(ORPHAN_INDEX.read_text()) or {}
     except Exception as exc:
-        first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
-        broken.append({"catalog": "ORPHAN", "path": str(ORPHAN_INDEX), "error": first})
+        broken.append({"catalog": "ORPHAN", "path": str(ORPHAN_INDEX),
+                       "error": why_broken(exc)})
         return []
     out = []
     for o in (doc.get("orphans") or []):
