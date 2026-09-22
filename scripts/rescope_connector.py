@@ -76,7 +76,8 @@ SCOPE_Q = {
 }
 # 201 candidates in one request returned HTTP 503. 40 goes through; the gateway's
 # limit is payload size, not rate, so smaller batches beat longer sleeps.
-BATCH = 40
+BATCH = 40          # unused by rescope() since it went per-item; kept for read_summaries
+PACE = float(os.environ.get("RECALL_SCOPE_PACE") or 0.35)
 # A scope needs to win, not merely come first. Both floors are deliberately
 # low: they exist to reject noise, not to second-guess a real decision.
 MIN_SCORE = float(os.environ.get("RECALL_SCOPE_MIN") or 0.15)
@@ -95,64 +96,51 @@ def load_key(env_path: Path = None) -> None:
             return
 
 
-def rescope(texts: list[str], scorer=None) -> list[str]:
-    """One scope per text. Batched, with backoff, because the gateway 503s.
+def rescope(texts: list[str], classifier=None) -> list[str]:
+    """One scope per text, each text scored ON ITS OWN.
 
-    KNOWN DEFECT, measured 2026-09-22 and not yet fixed. `jev.score` is a
-    RERANKER: it puts every candidate in `state.lessons` together and scores
-    them against one hardcoded proposition, so an item's number is conditioned
-    on its neighbours in that call. The MIN_SCORE/MIN_GAP floors below then
-    read a per-call scale as if it were absolute, and at BATCH=40 a 2,605-record
-    run is 66 different scales judged by one threshold.
+    This used to call `jev.score`, which is a RERANKER: it puts every candidate
+    in `state.lessons` together and scores them against one hardcoded
+    proposition, so an item's number was conditioned on whichever candidates
+    shared its call. The MIN_SCORE/MIN_GAP floors then read a per-call scale as
+    an absolute one -- at BATCH=40 a 2,605-record run was 66 scales under one
+    threshold. Measured 2026-09-22 on the same three records:
 
-    Observed: `linear:PRODUCT-2488` came out `personal` in a batch of 7 similar
-    thin tickets, and `unscoped` 3/3 times in a batch holding 4 diverse
-    controls. Same text, same questions, different neighbours. Adding fixed
-    anchor candidates to every call was tried and did not fix it (1/3 stable) --
-    anchors dilute differently at different batch sizes.
+        reranker path   1/3 stable across batch composition
+        this path       3/3
 
-    The real fix is okwow-jev rule 1: build the classify request directly, one
-    proposition per scope in `questions`, the item alone in `state`. That scores
-    each item independently and removes the batch entirely. It is a bigger
-    change than a patch here, and re-labelling the 3,104 records already in the
-    index is a separate decision.
-
-    Until then: a label out of this function is a hint, not a measurement, and
-    `unscoped` is the only answer it gives reliably.
+    `jev.classify` puts the item alone in `state` and one proposition per scope
+    in `questions`, which is okwow-jev rule 1. There is no batch, so there is
+    nothing for a batch to change. It also moves a quarter of the text: the
+    batched path re-sent all 40 records once per axis, four times over.
     """
     if not texts:
         return []
-    if scorer is None:
+    if classifier is None:
         import jev
-        scorer = jev.score
-    cols = {k: [] for k in SCOPE_Q}
-    for s in range(0, len(texts), BATCH):
-        chunk = texts[s:s + BATCH]
-        for k, q in SCOPE_Q.items():
-            for attempt in range(1, 6):
-                try:
-                    cols[k].extend(scorer(q, chunk))
-                    break
-                except Exception:
-                    if attempt == 5:
-                        raise
-                    time.sleep(3 * attempt)
-            time.sleep(0.8)
-    # An argmax with no gap check reads noise as a decision. Measured
-    # 2026-09-21: 62 Linear records whose whole text was "Triage · Tech Debt"
-    # scored near zero on all four scopes, and the winner was whichever
-    # rounding went first -- they came out `personal`. This is the corpus's own
-    # floor rule ("at the floor the size of the gap is the signal, not its
-    # sign") applied where it was first ignored.
+        classifier = jev.classify
+
     out = []
-    for i in range(len(texts)):
-        per = {k: cols[k][i] for k in SCOPE_Q}
+    for i, text in enumerate(texts):
+        for attempt in range(1, 6):
+            try:
+                per = classifier(text, SCOPE_Q)
+                break
+            except Exception:
+                if attempt == 5:
+                    raise
+                time.sleep(3 * attempt)
         rank = sorted(per.items(), key=lambda kv: -kv[1])
         top, second = rank[0], rank[1]
-        if top[1] < MIN_SCORE or (top[1] - second[1]) < MIN_GAP:
-            out.append("unscoped")
-        else:
-            out.append(top[0])
+        # An argmax with no gap check reads noise as a decision. Measured
+        # 2026-09-21: 62 Linear records whose whole text was "Triage · Tech
+        # Debt" scored near zero on all four scopes, and the winner was
+        # whichever rounding went first -- they came out `personal`. At the
+        # floor the size of the gap is the signal, not its sign.
+        out.append("unscoped" if top[1] < MIN_SCORE or (top[1] - second[1]) < MIN_GAP
+                   else top[0])
+        if i + 1 < len(texts):
+            time.sleep(PACE)
     return out
 
 

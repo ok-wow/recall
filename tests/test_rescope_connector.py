@@ -43,43 +43,69 @@ def main() -> int:
             dict(base, id="fathom:2", title="Design Review", scope="team"),
         ])
 
-        # The fake recovers the scope from SCOPE_Q itself rather than from the
-        # question's wording. Keying on phrases inside the prompt made this
-        # suite fail the moment the questions were reworded -- which is the
-        # brittleness jev.py's docstring warns about, reproduced in a test.
-        Q2K = {v: k for k, v in rc.SCOPE_Q.items()}
+        # The fake keys on SCOPE_Q's KEYS, never on the question wording. Keying
+        # on phrases inside the prompt made this suite fail the moment the
+        # questions were reworded -- the brittleness jev.py's docstring warns
+        # about, reproduced in a test.
+        #
+        # Its signature is the classify shape, (item, propositions) -> {scope:
+        # score}, not the reranker's (question, texts) -> [score]. That is the
+        # whole change: one item, scored alone, against every proposition at
+        # once. A fake that still took a list of texts would be testing a call
+        # shape the code no longer makes.
+        rc.PACE = 0                      # no sleeping in tests
 
-        def fake(question, texts):
-            key = Q2K[question]
-            return [0.9 if key in t else 0.1 for t in texts]
+        def fake(item, props):
+            return {k: (0.9 if k in item else 0.1) for k in props}
 
-        got = rc.rescope(["this is organization", "this is team"], scorer=fake)
+        got = rc.rescope(["this is organization", "this is team"], classifier=fake)
         check("argmax picks the highest-scoring scope", got == ["organization", "team"], got)
 
-        # Batching must not drop or reorder. 95 records over BATCH=40 is 3 batches.
-        rc.BATCH = 40
+        # Nothing batches any more, but count and order still have to survive
+        # the loop -- the property the old batching test was really protecting.
         many = ["this is team"] * 55 + ["this is organization"] * 40
-        got = rc.rescope(many, scorer=fake)
-        check("batching preserves count", len(got) == 95, len(got))
-        check("batching preserves order",
+        got = rc.rescope(many, classifier=fake)
+        check("every record gets exactly one scope", len(got) == 95, len(got))
+        check("order is preserved",
               got[:55] == ["team"] * 55 and got[55:] == ["organization"] * 40)
+
+        # Each record must be scored on its own. If the loop ever reintroduced a
+        # batch, this fake would see more than one item in a call.
+        seen = []
+
+        def solo(item, props):
+            seen.append(item)
+            return {k: (0.9 if k in item else 0.1) for k in props}
+        rc.rescope(["this is team", "this is organization", "this is team"], classifier=solo)
+        check("one call per record, never a batch", len(seen) == 3, len(seen))
+        check("each call carries one record only",
+              all(isinstance(x, str) for x in seen))
 
         # A record nothing matches must come back unscoped, not be assigned the
         # scope whose rounding happened to win.
-        flat = rc.rescope(["nothing matches"], scorer=fake)
+        flat = rc.rescope(["nothing matches"], classifier=fake)
         check("a record with no signal is unscoped, not guessed",
               flat == ["unscoped"], flat)
 
-        def nearly_tied(question, texts):
-            k = Q2K[question]
-            return [0.42 if k == "team" else 0.40 for _ in texts]
+        def nearly_tied(item, props):
+            return {k: (0.42 if k == "team" else 0.40) for k in props}
         check("a win inside the gap is unscoped",
-              rc.rescope(["x"], scorer=nearly_tied) == ["unscoped"])
+              rc.rescope(["x"], classifier=nearly_tied) == ["unscoped"])
 
-        def clear(question, texts):
-            k = Q2K[question]
-            return [0.80 if k == "team" else 0.10 for _ in texts]
-        check("a clear win is kept", rc.rescope(["x"], scorer=clear) == ["team"])
+        def clear(item, props):
+            return {k: (0.80 if k == "team" else 0.10) for k in props}
+        check("a clear win is kept", rc.rescope(["x"], classifier=clear) == ["team"])
+
+        # A transient failure must be retried, not turned into a wrong label.
+        calls = [0]
+
+        def flaky(item, props):
+            calls[0] += 1
+            if calls[0] < 3:
+                raise RuntimeError("gateway said 529")
+            return {k: (0.80 if k == "team" else 0.10) for k in props}
+        check("a transient classifier failure is retried",
+              rc.rescope(["x"], classifier=flaky) == ["team"], calls[0])
 
         # Dry run must not touch the store. This is the safety property.
         before = ci.path_for("fathom").read_text()

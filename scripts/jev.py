@@ -131,3 +131,69 @@ def score(question: str, lessons: Sequence[str]) -> list[float]:
             raise Unavailable(f"no usable answer for {n}")
         out.append(float(a["noul"]))
     return out
+
+
+CLASSIFY_CONTEXT = (
+    "A company keeps a pointer to something that happened inside it — a "
+    "meeting, an issue, a message. Each pointer carries a short summary. The "
+    "question is who inside the company that pointer is for."
+)
+
+
+def classify(item: str, propositions: dict[str, str]) -> dict[str, float]:
+    """Score ONE item against each proposition, independently.
+
+    This is the shape `score` is not. `score` is a reranker: it puts every
+    candidate in `state.lessons` together and asks one hardcoded proposition
+    about each, so a candidate's number is conditioned on its neighbours and
+    only comparable inside that one call. Measured 2026-09-22: the same Linear
+    ticket came out `personal` in a batch of 7 similar thin tickets and
+    `unscoped` 3/3 in a batch holding 4 diverse controls.
+
+    Here the item is alone in `state` and each proposition is its own entry in
+    `questions`, which is what okwow-jev rule 1 says to do to CLASSIFY. There
+    is no batch, so there is nothing for a batch to change.
+
+    It also moves less text: the batched path re-sends all 40 records once per
+    axis, four times over. This sends each record once.
+    """
+    key = os.environ.get("AI_GATEWAY_API_KEY", "").strip()
+    if not key:
+        raise Unavailable("AI_GATEWAY_API_KEY is not set")
+    if not item or not propositions:
+        return {}
+
+    names = list(propositions)
+    body = {
+        "model": MODEL,
+        "state": {"context": CLASSIFY_CONTEXT, "record": item},
+        "questions": {n: {"type": "noul",
+                          "instructions": " ".join(str(propositions[n]).split())}
+                      for n in names},
+    }
+
+    payload = None
+    for attempt in range(1, ATTEMPTS + 1):
+        try:
+            payload = _post(body, key)
+            break
+        except urllib.error.HTTPError as exc:
+            reason = f"HTTP {exc.code}"
+            retryable = exc.code in (408, 429, 500, 502, 503, 504, 529)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            reason = exc.__class__.__name__
+            retryable = True
+        if not retryable or attempt == ATTEMPTS:
+            raise Unavailable(reason)
+        time.sleep(1.2 * attempt)
+
+    answers = (payload or {}).get("answers")
+    if not isinstance(answers, dict):
+        raise Unavailable("response carried no answers")
+    out = {}
+    for n in names:
+        a = answers.get(n)
+        if not isinstance(a, dict) or not isinstance(a.get("noul"), (int, float)):
+            raise Unavailable(f"no usable answer for {n}")
+        out[n] = float(a["noul"])
+    return out
