@@ -26,8 +26,10 @@ drift. The transform IS the specification: to change what Codex is allowed to
 differ by, you edit this list, which makes the exception reviewable instead of
 invisible.
 
-    check_hook_parity.py                 verify all three copies agree
+    check_hook_parity.py                 verify Codex = Claude + delta, and that
+                                         every served hook IS the tracked file
     check_hook_parity.py --write-codex   DERIVE the Codex hook from the Claude copy
+    check_hook_parity.py --link          replace every served copy with a link
 
 The writer is the point of the transform, not a convenience on top of it. Because
 the Codex copy is derivable, it does not need to be stored -- which matters, since
@@ -49,17 +51,58 @@ from pathlib import Path
 CLAUDE = Path.home() / ".claude/hooks/okwow-compound-userprompt.sh"
 CODEX = Path.home() / ".codex/hooks/okwow-compound-userprompt.sh"
 
-# A THIRD copy exists and drifts just as freely. ~/.claude/hooks is not a git
-# repo, so ~/.claude/skills/hooks holds the version-controlled mirror -- as real
-# files, not symlinks. Found 28 lines stale within minutes of editing the live
-# sessionstart hook on 2026-09-15. The mirror is what survives a machine, so a
-# stale mirror means the committed contract is not the served one.
-MIRRORED = [
-    "okwow-compound-userprompt.sh",
-    "okwow-compound-sessionstart.sh",
-]
-LIVE_DIR = Path.home() / ".claude/hooks"
-MIRROR_DIR = Path.home() / ".claude/skills/hooks"
+# ONE COPY, NOT MATCHING COPIES. Until 2026-09-19 ~/.claude/hooks held real files
+# and ~/.claude/skills/hooks held a committed mirror of two of them. Then the live
+# hooks became symlinks into ~/.claude/skills/_hooks, so the tracked file IS what
+# is served -- and every other copy became the drift this script exists to catch.
+# Measured 2026-09-22: the mirror had drifted on 5 of 22 files (only 2 watched),
+# and ~/.codex/hooks, which held plain copies, on 5 of 22 -- 475 lines behind on
+# sessionstart, and without the drain's refuse-to-run-unattended guard. So the
+# check is no longer "these copies agree". It is "every place a hook is served
+# from resolves to the tracked file", except the hook DERIVED from it below.
+TRACKED = Path.home() / ".claude/skills/_hooks"
+SERVED_DIRS = [Path.home() / ".claude/hooks", Path.home() / ".codex/hooks",
+               Path.home() / ".claude/skills/hooks"]
+IN_REPO = Path.home() / ".claude/skills"   # links inside the repo stay relative
+
+
+def unlinked() -> list[tuple[Path, bool]]:
+    """(served path, identical?) for every served hook that is not the tracked file."""
+    out = []
+    for d in SERVED_DIRS:
+        if not d.is_dir():
+            continue
+        for p in sorted(d.iterdir()):
+            src = TRACKED / p.name
+            if (not src.is_file() or p == CODEX or ".bak-" in p.name
+                    or p.resolve() == src.resolve()):
+                continue
+            out.append((p, p.is_file() and p.read_bytes() == src.read_bytes()))
+    return out
+
+
+def link_all() -> int:
+    """Replace every served copy with a link to the tracked file.
+
+    A drifted copy is kept beside it as .bak-<time> first, since it may hold an
+    edit nobody committed. The swap is link-beside-then-rename, so the served path
+    is never missing -- a hook that fires in that gap would fail without a trace.
+    """
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    todo = unlinked()
+    for p, same in todo:
+        src = TRACKED / p.name
+        # Outside the repo a drifted copy may be the only record of an edit; inside
+        # it, git already holds every committed version.
+        if not same and IN_REPO not in p.parents:
+            shutil.copy2(p, p.with_name(f"{p.name}.bak-{stamp}"))
+        dest = (os.path.relpath(src, p.parent) if IN_REPO in p.parents else str(src))
+        tmp = p.with_name(f".{p.name}.link-{stamp}")
+        os.symlink(dest, tmp)
+        os.replace(tmp, p)
+        print(f"hook-parity: linked {p} -> {dest}" + ("" if same or IN_REPO in p.parents else "  (old copy kept as .bak)"))
+    print(f"hook-parity: {len(todo)} served cop{'y' if len(todo) == 1 else 'ies'} replaced with links")
+    return 0
 
 # (what the Claude copy says, what the Codex copy must say instead, why)
 CODEX_DELTA: list[tuple[str, str, str]] = [
@@ -152,10 +195,14 @@ def main() -> int:
                     help="derive the Codex hook from the Claude copy + CODEX_DELTA")
     ap.add_argument("--target", type=Path, default=CODEX,
                     help="where to write (tests point this at a temp file)")
+    ap.add_argument("--link", action="store_true",
+                    help="replace every served copy of a tracked hook with a link to it")
     a = ap.parse_args()
 
     if a.write_codex:
         return write_codex(a.target)
+    if a.link:
+        return link_all()
 
     for f in (CLAUDE, CODEX):
         if not f.exists():
@@ -174,29 +221,22 @@ def main() -> int:
             return 1
         expected = expected.replace(src, dst, 1)
 
-    stale = []
-    for name in MIRRORED:
-        live, mirror = LIVE_DIR / name, MIRROR_DIR / name
-        if not mirror.exists():
-            stale.append(f"{name}: no mirror at {mirror}")
-        elif live.exists() and live.read_text() != mirror.read_text():
-            n = sum(1 for _ in difflib.unified_diff(
-                live.read_text().splitlines(), mirror.read_text().splitlines(), n=0)
-                if _.startswith(("+", "-")) and not _.startswith(("+++", "---")))
-            stale.append(f"{name}: mirror is {n} line(s) behind the live hook")
+    stale = unlinked()
 
     if expected == codex and not stale:
         print("hook-parity: Claude and Codex hooks agree "
-              f"({len(CODEX_DELTA)} declared differences); "
-              f"{len(MIRRORED)} mirror(s) current")
+              f"({len(CODEX_DELTA)} declared differences); every served hook is "
+              f"the tracked file")
         return 0
 
     if stale:
-        print("hook-parity: the version-controlled mirror does not match what is "
-              "actually served:", file=sys.stderr)
-        for s in stale:
-            print(f"  - {s}", file=sys.stderr)
-        print(f"  Fix:  cp {LIVE_DIR}/<hook> {MIRROR_DIR}/<hook>", file=sys.stderr)
+        print("hook-parity: a served hook is a COPY of the tracked one, not a link "
+              "to it:", file=sys.stderr)
+        for p, same in stale:
+            print(f"  - {p}: " + ("identical today, and it will drift" if same
+                                  else "DRIFTED from the tracked hook"), file=sys.stderr)
+        print("  Fix:  python3 ~/.claude/skills/okwow-compound/scripts/"
+              "check_hook_parity.py --link", file=sys.stderr)
         if expected == codex:
             return 1
         print(file=sys.stderr)

@@ -91,6 +91,8 @@ def run(d: Path, *args: str, probe_index: str | None = None,
            "RECALL_SPECS_INDEX": str(d / "nonexistent-specs.txt"),
            "RECALL_HUB_INDEX": str(d / "nonexistent-hub.json"),
            "RECALL_CONNECTOR_DIR": str(d / "nonexistent-connectors"),
+           "RECALL_RECEIPT_DIR": str(d / "nonexistent-receipts"),
+           "RECALL_ORPHAN_INDEX": str(d / "nonexistent-orphans.yaml"),
            "RECALL_PROBE_INDEX": probe_index or str(d / "nonexistent-index.json"),
            "RECALL_SURFACED_LOG": surfaced_log or str(d / "surfaced.jsonl")}
     p = subprocess.run([sys.executable, str(RECALL), *args],
@@ -274,10 +276,14 @@ def main() -> int:
            "RECALL_SPECS_INDEX": str(d / "nonexistent-specs.txt"),
            "RECALL_HUB_INDEX": str(d / "nonexistent-hub.json"),
            "RECALL_CONNECTOR_DIR": str(d / "nonexistent-connectors"),
+           "RECALL_RECEIPT_DIR": str(d / "nonexistent-receipts"),
+           "RECALL_ORPHAN_INDEX": str(d / "nonexistent-orphans.yaml"),
                  "RECALL_SURFACED_LOG": str(plog), "RECALL_HOME": str(d / "fake-home"),
                  "RECALL_SPECS_INDEX": str(d / "nonexistent-specs.txt"),
            "RECALL_HUB_INDEX": str(d / "nonexistent-hub.json"),
-           "RECALL_CONNECTOR_DIR": str(d / "nonexistent-connectors")}
+           "RECALL_CONNECTOR_DIR": str(d / "nonexistent-connectors"),
+           "RECALL_RECEIPT_DIR": str(d / "nonexistent-receipts"),
+           "RECALL_ORPHAN_INDEX": str(d / "nonexistent-orphans.yaml")}
     subprocess.run([sys.executable, str(RECALL), "anything"],
                    capture_output=True, text=True, env=env_probe)
     check("an overridden log means production is never touched",

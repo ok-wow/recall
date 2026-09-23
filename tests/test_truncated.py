@@ -73,6 +73,11 @@ def run(d: Path, *args):
            # gains the real rules from ~/.claude/skills.
            "RECALL_SKILLS_DIR": str(Path(__file__).resolve().parent / "fixtures" / "no-skills"),
            "RECALL_PROBE_INDEX": str(d / "none.json"),
+           # Every corpus recall can read has to be pinned here, or a loader
+           # added later silently pulls a real store into a fixture-sized test.
+           # Third time: specs/hub/connectors this morning, receipts/orphans now.
+           "RECALL_RECEIPT_DIR": str(d / "none-receipts"),
+           "RECALL_ORPHAN_INDEX": str(d / "none-orphans.yaml"),
            "RECALL_SURFACED_LOG": str(d / "surfaced.jsonl")}
     p = subprocess.run([sys.executable, str(RECALL), *args],
                        capture_output=True, text=True, env=env)

@@ -49,6 +49,47 @@ CATALOG = """\
 """
 
 
+# The third shape, and the reason this file grew: every skill rules.yaml wraps
+# its entries in a `rules:` mapping and indents the item marker two columns, so
+# fields sit at four. Until 2026-09-22 the span logic was pinned to column zero
+# and refused all 204 of them with "entry not found".
+SKILL_RULES = """\
+rules:
+  - id: first-rule-in-a-skill-file
+    category: team-doctrine
+    applies_to: [doctrine, agent]
+    description: >
+      A folded description, which is what the always-on block is built from.
+    rule: >
+      Do the thing, and keep doing it.
+    recurrences: 2
+    recurrence_2026_09_01: An earlier repeat, already dated.
+  - id: rule-with-a-block-list
+    category: team-doctrine
+    applies_to:
+      - marketing site
+      - design
+    rule: >
+      A block-style applies_to is the shape that breaks naive line-walking.
+  - id: the-rule-that-must-not-move
+    category: team-doctrine
+    rule: >
+      Nothing should ever touch this one.
+    recurrences: 7
+"""
+
+
+def fresh_skill() -> Path:
+    d = Path(tempfile.mkdtemp(prefix="recallbumpskill-"))
+    f = d / "rules.yaml"
+    f.write_text(SKILL_RULES)
+    return f
+
+
+def load_skill(f: Path) -> dict:
+    return {e["id"]: e for e in yaml.safe_load(f.read_text())["rules"]}
+
+
 def run(path: Path, eid: str, note: str, today: str = TODAY) -> tuple[int, str]:
     p = subprocess.run([sys.executable, str(BUMP), str(path), eid, "-"],
                        input=note, capture_output=True, text=True,
@@ -141,6 +182,52 @@ def main() -> int:
     check("only the counter line changed shape", moved == ["  recurrences: 7"], moved[:4])
     check("exactly two lines are new", len([ln for ln in b if ln not in a]) == 2,
           [ln for ln in b if ln not in a])
+
+    # ---- the skill rules.yaml shape: `rules:` mapping, indented items ----
+    f = fresh_skill()
+    rc, out = run(f, "first-rule-in-a-skill-file", "The skill shape is reachable now.")
+    c = load_skill(f)
+    e = c["first-rule-in-a-skill-file"]
+    check("an indented entry is found at all", rc == 0, f"rc={rc} {out[:140]}")
+    check("its counter advances", e.get("recurrences") == 3, e.get("recurrences"))
+    check("a dated key is written at the right indent",
+          f"recurrence_{TODAY}" in e, sorted(e)[:8])
+    check("the note is the value",
+          "reachable now" in str(e.get(f"recurrence_{TODAY}", "")))
+    check("an earlier dated key survives",
+          str(e.get("recurrence_2026_09_01", "")).startswith("An earlier"))
+    check("the neighbour is untouched",
+          c["the-rule-that-must-not-move"]["recurrences"] == 7)
+    check("the description is not disturbed",
+          "always-on block" in str(e.get("description", "")), e.get("description"))
+    check("no field landed at the catalog indent",
+          f"\n  recurrence_{TODAY}:" not in f.read_text())
+
+    # A block-style applies_to is what broke a naive line-walker the same day.
+    f = fresh_skill()
+    rc, out = run(f, "rule-with-a-block-list", "A block list must survive.")
+    c = load_skill(f)
+    e = c["rule-with-a-block-list"]
+    check("an entry with a block list is found", rc == 0, f"rc={rc} {out[:140]}")
+    check("a missing counter starts at 1", e.get("recurrences") == 1, e.get("recurrences"))
+    check("the block list is intact",
+          e.get("applies_to") == ["marketing site", "design"], e.get("applies_to"))
+    check("the entry ABOVE it did not move",
+          c["first-rule-in-a-skill-file"].get("recurrences") == 2,
+          c["first-rule-in-a-skill-file"].get("recurrences"))
+
+    # Same-day append has to work at this indent too, not just at column zero.
+    run(f, "rule-with-a-block-list", "Morning failure.", today=TODAY)
+    rc, out = run(f, "rule-with-a-block-list", "Afternoon failure.", today=TODAY)
+    v = str(load_skill(f)["rule-with-a-block-list"].get(f"recurrence_{TODAY}", ""))
+    check("same-day notes append at this indent",
+          "Morning" in v and "Afternoon" in v, v[:120])
+
+    f = fresh_skill()
+    rc, out = run(f, "no-such-rule", "nope")
+    check("an unknown id is still refused", rc != 0 and "not found" in out, out[:100])
+    check("a refused run wrote nothing", f.read_text() == SKILL_RULES)
+
 
     print()
     if fails:

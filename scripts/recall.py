@@ -90,6 +90,10 @@ HUB_INDEX = env_path("RECALL_HUB_INDEX", "OKWOW_HUB_INDEX",
 HUB_BASE = os.environ.get("RECALL_HUB_BASE") or "https://internal.okwow.ai"
 # Pointers into Slack, Gmail, meetings -- written by connector_index.py, which
 # refuses anything longer than a gist. See load_connectors.
+RECEIPT_DIR = env_path("RECALL_RECEIPT_DIR", "OKWOW_RECEIPT_DIR",
+                       Path.home() / ".okwow/local-learning-receipts")
+ORPHAN_INDEX = env_path("RECALL_ORPHAN_INDEX", "OKWOW_ORPHAN_INDEX",
+                        Path.home() / ".claude/skills/_orphans/learnings.yaml")
 CONNECTOR_DIR = env_path("RECALL_CONNECTOR_DIR", "OKWOW_CONNECTOR_DIR",
                          RECALL_HOME / "connectors")
 
@@ -202,6 +206,8 @@ def load_entries() -> list[dict]:
     entries.extend(load_specs(broken))
     entries.extend(load_hub(broken))
     entries.extend(load_connectors(broken))
+    entries.extend(load_receipts(broken))
+    entries.extend(load_orphans(broken))
     load_entries.broken = broken
     load_entries.parsed = parsed
     return entries
@@ -405,6 +411,140 @@ def load_hub(broken: list[dict]) -> list[dict]:
     return out
 
 
+# A loader's `except Exception` cannot tell "this file is malformed" from "this
+# code is broken", and it reports both as the first. Flagged 2026-09-22 by a
+# parallel session reading a NameError as a parse failure: the message blamed
+# the receipts for a missing import. The data case is recoverable and expected
+# -- one corrupt file must not cost the other 265. A programming error is
+# neither, and saying so in the message is the difference between fixing a file
+# and fixing the reader.
+DATA_ERRORS = (ValueError, UnicodeDecodeError, OSError, KeyError, TypeError,
+               AttributeError)
+
+
+def why_broken(exc: Exception) -> str:
+    """The error line, marked when the cause is this code rather than the file."""
+    first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+    if isinstance(exc, (NameError, ImportError, IndentationError, SyntaxError)):
+        return f"BUG IN RECALL, not in this file — {exc.__class__.__name__}: {first}"
+    return first
+
+
+def load_receipts(broken: list[dict]) -> list[dict]:
+    """Index the local learning receipts -- the working notes, not the verdicts.
+
+    A receipt is what was known at one moment, with its locators, its authority
+    and its uncertainty intact. A catalog entry is the settled conclusion. The
+    two are different jobs and merging them would lose the provenance half.
+
+    What was wrong until 2026-09-22 is that only the second half was findable.
+    266 receipts sat outside every search path, so the working notes accumulated
+    where nothing could reach them -- the same disease as 87 parked orphans and
+    29 undescribed doctrine rules, a third time. Indexing them does not promote
+    anything; it just means a candidate can be FOUND before it is re-derived.
+
+    Two shapes on disk: the contract's `<id>/v<N>.json` versioned directory, and
+    flat `.md`/`.json`/`.yaml` files from before it. Both are read; the newest
+    version of a directory wins.
+    """
+    import yaml            # deferred, as every loader here does
+    if not RECEIPT_DIR.exists():
+        return []
+    out = []
+
+    def add(rid: str, title: str, body: str, when: str, path: Path, ver: str = ""):
+        body = " ".join(str(body).split())
+        out.append({
+            "key": f"RECEIPT:{rid}", "id": rid, "catalog": "RECEIPT",
+            "recurrences": 0, "probe_when": [], "is_receipt": True,
+            "raw": {"id": rid, "title": title or rid,
+                    "summary": body[:400] or title or rid,
+                    "doc_type": f"receipt{' ' + ver if ver else ''}",
+                    "updated": when, "spec_path": str(path)},
+            "text": "\n".join([rid.replace("-", " "), title, body]),
+        })
+
+    for item in sorted(RECEIPT_DIR.iterdir()):
+        try:
+            if item.is_dir():
+                vs = sorted(item.glob("v*.json"),
+                            key=lambda f: int(f.stem[1:]) if f.stem[1:].isdigit() else 0)
+                if not vs:
+                    continue
+                d = json.loads(vs[-1].read_text())
+                body = json.dumps(d.get("candidate") or d.get("claims") or d,
+                                  ensure_ascii=False)
+                add(item.name, str(d.get("revision_reason") or ""), body,
+                    str(d.get("captured_at") or "")[:10], vs[-1], vs[-1].stem)
+            elif item.suffix in (".json", ".yaml", ".yml", ".md"):
+                raw = item.read_text()
+                if item.suffix == ".md":
+                    add(item.stem, "", raw, "", item)
+                else:
+                    d = (json.loads(raw) if item.suffix == ".json"
+                         else yaml.safe_load(raw))
+                    if not isinstance(d, dict):
+                        continue
+                    add(str(d.get("id") or d.get("receipt_id") or item.stem),
+                        str(d.get("title") or d.get("revision_reason") or ""),
+                        json.dumps(d, ensure_ascii=False, default=str),
+                        str(d.get("captured_at") or "")[:10], item)
+        except Exception as exc:
+            broken.append({"catalog": "RECEIPT", "path": str(item),
+                           "error": why_broken(exc)})
+    return out
+
+
+def load_orphans(broken: list[dict]) -> list[dict]:
+    """Index the orphanage -- learning that was captured and had no home yet.
+
+    A parked orphan is the worst state in the system: captured, so it reads as
+    handled, and outside every search path, so it cannot be reached. 87 of them
+    on 2026-09-22, with three categories over the promotion threshold and
+    `okwow-promote` never once run. Indexing them does not promote them. It
+    means the next session asking the question finds the note instead of
+    starting the thought again.
+    """
+    import yaml            # deferred, as every loader here does
+    if not ORPHAN_INDEX.exists():
+        return []
+    try:
+        doc = yaml.safe_load(ORPHAN_INDEX.read_text()) or {}
+    except Exception as exc:
+        broken.append({"catalog": "ORPHAN", "path": str(ORPHAN_INDEX),
+                       "error": why_broken(exc)})
+        return []
+    out = []
+    for o in (doc.get("orphans") or []):
+        if not isinstance(o, dict):
+            continue
+        # Only a PARKED orphan is unhomed. A promoted one lives at promoted_to,
+        # often corrected on the way: of 17 code facts promoted on 2026-09-22,
+        # 9 changed and 2 were false ("the backend has no MCP client"). Indexing
+        # the parked text would keep serving the version that was fixed.
+        if str(o.get("status") or "parked") != "parked":
+            continue
+        oid = str(o.get("id") or o.get("name") or "")
+        if not oid:
+            continue
+        body = " ".join(str(v) for k, v in o.items()
+                        if k not in ("id", "name") and isinstance(v, (str, int, float)))
+        cat = str(o.get("proposed_category") or "")
+        out.append({
+            "key": f"ORPHAN:{oid}", "id": oid, "catalog": "ORPHAN",
+            "recurrences": 0, "probe_when": [], "is_orphan": True,
+            "raw": {"id": oid, "title": oid.replace("-", " "),
+                    "summary": " ".join(body.split())[:400],
+                    "doc_type": f"orphan · {o.get('status') or 'parked'}"
+                                + (f" · {cat}" if cat else ""),
+                    "updated": str(o.get("captured_at") or o.get("date") or "")[:10],
+                    "spec_path": str(ORPHAN_INDEX)},
+            "text": "\n".join([oid.replace("-", " "), body, cat,
+                              str(o.get("proposed_artifact_slug") or "")]),
+        })
+    return out
+
+
 def load_connectors(broken: list[dict]) -> list[dict]:
     """Index the connector pointers under $RECALL_HOME/connectors/*.jsonl.
 
@@ -457,7 +597,11 @@ def load_connectors(broken: list[dict]) -> list[dict]:
                 "is_connector": True,
                 "raw": {"id": r["id"], "title": title, "summary": gist or title,
                         "spec_status": str(r.get("where") or ""),
-                        "doc_type": source, "updated": str(r.get("date") or "")[:10],
+                        # scope rides in doc_type so the existing spec/hub
+                        # rendering prints it without a second code path.
+                        "doc_type": f"{source} · {r['scope']}" if r.get("scope")
+                                    and r["scope"] != "unscoped" else source,
+                        "updated": str(r.get("date") or "")[:10],
                         "spec_path": str(r.get("url") or "")},
                 # People are indexed: "what did Zachary say about X" is the
                 # question a thread index answers and a spec index cannot.
@@ -606,7 +750,8 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None,
     body = _first(r, DISPLAY_BODY) or _longest_unknown(r) or ""
     body = " ".join(str(body).split())
     print("  " + (body if full else body[:BODY_CAP] + ("…" if len(body) > BODY_CAP else "")))
-    if e.get("is_spec") or e.get("is_hub") or e.get("is_connector"):
+    if (e.get("is_spec") or e.get("is_hub") or e.get("is_connector")
+            or e.get("is_receipt") or e.get("is_orphan")):
         # A spec has no fix. Its state and its path are what a reader needs
         # next, and the path is the whole point of retrieving it.
         meta = " · ".join(x for x in (r.get("doc_type"), r.get("spec_status"),
@@ -831,7 +976,8 @@ def truncated_fixes(entries: list[dict]) -> list[dict]:
         # truncation that cannot happen. Left in and the number moves by 9.
         # Specs never reach it either, and for the same reason.
         if e.get("is_rule") or e.get("is_spec") or e.get("is_hub") \
-                or e.get("is_connector"):
+                or e.get("is_connector") or e.get("is_receipt") \
+                or e.get("is_orphan"):
             continue
         raw = e["raw"]
         parts = [("what to do", push.remedy(raw)), ("body", push.summarize(raw))]
@@ -1000,7 +1146,8 @@ def main() -> int:
         # percentage without anything becoming less reachable.
         cat = [e for e in entries if not e.get("is_rule")
                and not e.get("is_spec") and not e.get("is_hub")
-               and not e.get("is_connector")]
+               and not e.get("is_connector") and not e.get("is_receipt")
+               and not e.get("is_orphan")]
         rules = [e for e in entries if e.get("is_rule")]
         specs = [e for e in entries if e.get("is_spec")]
         unreachable = [e for e in cat if e["key"] not in idx]
@@ -1121,7 +1268,8 @@ def main() -> int:
         # mode exists to surface under a growing pile working as intended.
         sel = [e for e in entries
                if not e.get("is_spec") and not e.get("is_hub")
-               and not e.get("is_connector") and e["key"] not in idx][:a.limit]
+               and not e.get("is_connector") and not e.get("is_receipt")
+               and not e.get("is_orphan") and e["key"] not in idx][:a.limit]
     elif a.stubs:
         # An id with no body AND no fix is indistinguishable from a covered
         # lesson in every count, and cannot be acted on by anyone. The id still
