@@ -105,6 +105,33 @@ PY
   exit 0
 fi
 
+# ----------------------------------------------------------- plugin guard --
+# Recall also ships as a Claude Code plugin, and Claude Code runs a settings.json
+# hook AND a plugin's copy of the same hook. Both installs at once would capture
+# and inject everything twice, so refuse before the plan rather than after it.
+if [ "$HOST" = claude ]; then
+  PLUGIN_ID=$(python3 - "$SETTINGS" \
+      "${CLAUDE_CODE_PLUGIN_CACHE_DIR:-$RECALL_HOST_DIR/plugins}/installed_plugins.json" <<'PY'
+import json, sys
+def ids(path, key):
+    try:
+        d = json.load(open(path)).get(key) or {}
+    except Exception:
+        return []
+    # enabledPlugins maps id -> bool; installed_plugins maps id -> [installs]
+    return [k for k, v in d.items() if k.split("@")[0] == "recall" and v is not False]
+found = ids(sys.argv[1], "enabledPlugins") + ids(sys.argv[2], "plugins")
+print(found[0] if found else "")
+PY
+)
+  if [ -n "$PLUGIN_ID" ]; then
+    echo "Recall is already installed as a Claude Code plugin ($PLUGIN_ID)." >&2
+    echo "Installing it here as well would run every hook twice, so nothing was changed." >&2
+    echo "Keep the plugin, or remove it first:  claude plugin uninstall $PLUGIN_ID" >&2
+    exit 1
+  fi
+fi
+
 # --------------------------------------------------------------------- plan --
 say ""
 say "okWOW • Recall — install plan  (host: $HOST)"

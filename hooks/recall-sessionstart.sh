@@ -30,6 +30,50 @@ SCRIPT_PARENT=$(dirname -- "${BASH_SOURCE[0]:-$0}")
 SCRIPT_DIR=$(CDPATH= cd -P "$SCRIPT_PARENT" 2>/dev/null && pwd -P) || SCRIPT_DIR="."
 RECALL_SKILL_DIR="${RECALL_SKILL_DIR:-$SCRIPT_DIR/../scripts}"
 
+# --- running as a Claude Code plugin (2026-09-29) ----------------------------
+# Claude Code exports CLAUDE_PLUGIN_ROOT only to a plugin's own hooks, so it is
+# how this copy knows which install it belongs to. The plugin's skill is
+# namespaced, so the command a person types differs too.
+COMPOUND_CMD=/compound
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    COMPOUND_CMD=/recall:compound
+    # A plugin has no install step, so its first session creates what install.sh
+    # would have. Never inside the plugin folder: Claude Code replaces it on
+    # every update. Never overwrites a catalog.
+    for d in pending processed quarantine digests probe-state; do
+        mkdir -p "$RECALL_HOME/$d" 2>/dev/null || true
+    done
+    mkdir -p "$RECALL_CATALOG_DIR" 2>/dev/null || true
+    for c in FAILURE_MODES PROCESS_FAILURES DECISIONS; do
+        if [ ! -e "$RECALL_CATALOG_DIR/$c.yaml" ]; then
+            printf '# %s — filled as your sessions are distilled.\n[]\n' "$c" \
+                > "$RECALL_CATALOG_DIR/$c.yaml" 2>/dev/null || true
+        fi
+    done
+    # A settings.json hook from install.sh and this plugin's copy both run, so
+    # every event would fire twice. Only the plugin copy checks, so the warning
+    # prints once rather than once per copy.
+    DUP_REPO=$(python3 - "${RECALL_HOST_DIR:-$HOME/.claude}/settings.json" <<'PYEOF' 2>/dev/null || true
+import json, sys
+try:
+    for entries in (json.load(open(sys.argv[1])).get("hooks") or {}).values():
+        for e in entries or []:
+            for h in e.get("hooks") or []:
+                cmd = str(h.get("command", ""))
+                if "/hooks/recall-" in cmd:
+                    print(cmd.split("/hooks/recall-")[0])
+                    raise SystemExit(0)
+except SystemExit:
+    raise
+except Exception:
+    pass
+PYEOF
+)
+    if [ -n "$DUP_REPO" ]; then
+        echo "recall: every hook runs twice — the recall plugin and install.sh both registered them; run ${DUP_REPO}/install.sh --uninstall to keep only the plugin."
+    fi
+fi
+
 # Surface a SessionEnd safe_load-sweep break (v0.3.1), once, then clear it.
 BROKEN_MARKER="$RECALL_HOME/yaml-broken.json"
 if [ -f "$BROKEN_MARKER" ]; then
@@ -343,7 +387,7 @@ done <<< "$MARKERS"
 cat <<EOF
 <system-reminder>
 Recall has ${COUNT} pending session(s) to compound:
-${BODY}Run /compound to process, or delete the marker(s) under
+${BODY}Run ${COMPOUND_CMD} to process, or delete the marker(s) under
 ${PENDING_DIR}/ to dismiss.
 </system-reminder>
 EOF

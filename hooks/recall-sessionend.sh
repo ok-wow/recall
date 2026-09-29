@@ -160,7 +160,8 @@ fi
 #   Claude Code  <command-name>/compound</command-name>
 #   Claude Code  "content": "/compound ..."   (plain string content)
 #   Codex        "text":"/compound ..."       (block inside payload.content[])
-if grep -Eq '"(content|text)"[[:space:]]*:[[:space:]]*"/compound([[:space:]]|")|<command-name>/compound</command-name>' "$TRANSCRIPT_PATH" 2>/dev/null; then
+# A plugin install namespaces the skill, so /recall:compound counts the same.
+if grep -Eq '"(content|text)"[[:space:]]*:[[:space:]]*"/(recall:)?compound([[:space:]]|")|<command-name>/(recall:)?compound</command-name>' "$TRANSCRIPT_PATH" 2>/dev/null; then
     exit 0
 fi
 

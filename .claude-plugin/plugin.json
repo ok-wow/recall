@@ -1,0 +1,7 @@
+{
+  "name": "recall",
+  "description": "Catches what a session taught, and puts it back in front of your agent the next time it matters.",
+  "author": {
+    "name": "ok-wow"
+  }
+}
