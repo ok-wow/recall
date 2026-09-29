@@ -18,6 +18,7 @@ channel. The precise literal matcher stays exactly as it is for auto-injection.
     recall.py --specs "clarification form"      # the spec corpus only
     recall.py --hub "prototype"                 # the published hub, with URLs
     recall.py --connectors "pricing"            # Slack / Gmail / meeting pointers
+    recall.py --lot                             # parked work, most urgent first
     recall.py --id <entry-id>                   # one entry in full
     recall.py --recurring                       # lessons that repeated anyway
     recall.py --unreachable                     # entries auto-injection cannot see
@@ -96,6 +97,9 @@ ORPHAN_INDEX = env_path("RECALL_ORPHAN_INDEX", "OKWOW_ORPHAN_INDEX",
                         Path.home() / ".claude/skills/_orphans/learnings.yaml")
 CONNECTOR_DIR = env_path("RECALL_CONNECTOR_DIR", "OKWOW_CONNECTOR_DIR",
                          RECALL_HOME / "connectors")
+# Work somebody decided to do later, one JSON file per item, written by
+# park.py. See read_lot.
+LOT_DIR = env_path("RECALL_LOT_DIR", "OKWOW_LOT_DIR", RECALL_HOME / "lot" / "items")
 
 WORD = re.compile(r"[a-z0-9][a-z0-9._/-]*", re.I)
 # Ordinary English that carries no retrieval signal. Deliberately short: BM25's
@@ -208,6 +212,7 @@ def load_entries() -> list[dict]:
     entries.extend(load_connectors(broken))
     entries.extend(load_receipts(broken))
     entries.extend(load_orphans(broken))
+    entries.extend(load_lot(broken))
     load_entries.broken = broken
     load_entries.parsed = parsed
     return entries
@@ -545,6 +550,142 @@ def load_orphans(broken: list[dict]) -> list[dict]:
     return out
 
 
+# The parking lot's contract, shared with park.py, which writes it. Kept here
+# because recall reads the lot and park.py already imports recall; one
+# direction of import, one copy of the rules.
+LOT_OPEN = ("parked", "in-progress")
+LOT_TIER_LABEL = {1: "do next", 2: "soon", 3: "someday"}
+# A "do next" list with twenty items in it is a list nobody reads. See park.py.
+LOT_TIER1_CAP = 5
+
+
+def read_lot(broken: list[dict]) -> list[dict]:
+    """Every item in the parking lot, whatever its status.
+
+    One file per item so parallel sessions never merge a shared file. The file
+    name is the item's identity, because it is what park.py writes to. An
+    unreadable file is reported and skipped; it must not cost the rest.
+    """
+    if not LOT_DIR.exists():
+        return []
+    items = []
+    for f in sorted(LOT_DIR.glob("*.json")):
+        try:
+            item = json.loads(f.read_text())
+            if not isinstance(item, dict) or not str(item.get("title") or "").strip():
+                raise ValueError("not a parked item: it has no title")
+        except Exception as exc:
+            broken.append({"catalog": "LOT", "path": str(f), "error": why_broken(exc)})
+            continue
+        item["id"] = f.stem
+        items.append(item)
+    return items
+
+
+def load_lot(broken: list[dict]) -> list[dict]:
+    """Index the open items in the parking lot -- work deferred, not lessons.
+
+    "Do this later" used to be a line in a handoff, and nothing ever showed a
+    handoff line again. Indexed here, a question that touches the work finds
+    it. Done and killed items stay on disk for their history and leave the
+    index, so a finished plan never answers a question as if it were pending.
+    """
+    out = []
+    for i in read_lot(broken):
+        if str(i.get("status") or "parked") not in LOT_OPEN:
+            continue
+        src = i.get("source") if isinstance(i.get("source"), dict) else {}
+        out.append({
+            "key": f"LOT:{i['id']}", "id": i["id"], "catalog": "LOT",
+            "recurrences": 0, "probe_when": [], "is_lot": True, "raw": i,
+            "text": "\n".join(str(x) for x in (
+                i["id"].replace("-", " "), i.get("title"), i.get("body"),
+                i.get("first_move"), i.get("theme"), src.get("quote"),
+                src.get("ref")) if x),
+        })
+    return out
+
+
+def lot_tier(item: dict) -> int | None:
+    t = item.get("tier")
+    # bool first: True == 1, so a hand-edited "tier": true would read as tier 1.
+    return t if not isinstance(t, bool) and t in (1, 2, 3) else None
+
+
+def lot_tier1_open(items: list[dict]) -> int:
+    return sum(1 for i in items if lot_tier(i) == 1
+               and str(i.get("status") or "parked") in LOT_OPEN)
+
+
+def lot_order(items: list[dict]) -> list[dict]:
+    """Tier 1, 2, 3, then the unsorted inbox; the owner's own asks first
+    within each; then the most recently touched."""
+    items = sorted(items, key=lambda i: str(i.get("last_touched") or ""), reverse=True)
+    return sorted(items, key=lambda i: (lot_tier(i) or 4, not i.get("owner_said")))
+
+
+def lot_table(items: list[dict], tier1_open: int | None = None) -> str:
+    """The list a person scans: tier, id, title, theme, age in days.
+
+    tier1_open is counted by the caller over the whole store, because a
+    filtered list cannot tell how full tier 1 is.
+    """
+    if not items:
+        return "  nothing parked"
+    today = datetime.now(timezone.utc).date()
+    rows = []
+    for i in items:
+        try:
+            age = f"{(today - datetime.strptime(str(i.get('created'))[:10], '%Y-%m-%d').date()).days}d"
+        except ValueError:
+            age = "?"
+        title = " ".join(str(i.get("title") or "").split())
+        rows.append((f"{lot_tier(i) or 'inbox'}{'*' if i.get('owner_said') else ''}", i["id"],
+                     title if len(title) <= 50 else title[:49] + "…",
+                     str(i.get("theme") or "other"), age))
+    head = ("tier", "id", "title", "theme", "age")
+    w = [max(len(r[c]) for r in rows + [head]) for c in range(4)]
+    lines = ["  " + "  ".join(r[c].ljust(w[c]) for c in range(4)) + "  " + r[4]
+             for r in [head] + rows]
+    lines.append(f"\n  {len(items)} listed"
+                 + (f" · tier 1 holds {tier1_open} of {LOT_TIER1_CAP}" if tier1_open is not None else "")
+                 + (" · * the owner asked for it" if any(i.get("owner_said") for i in items) else ""))
+    return "\n".join(lines)
+
+
+def lot_lines(r: dict, full: bool = False) -> list[str]:
+    """A parked item is a plan: what it is, how urgent, where it came from,
+    and the first thing to do. It has no fix, so it does not print one."""
+    out = [f"  {' '.join(str(r.get('title') or '').split())}"]
+    body = " ".join(str(r.get("body") or "").split())
+    if body:
+        out.append("  " + (body if full else body[:BODY_CAP] + ("…" if len(body) > BODY_CAP else "")))
+    t = lot_tier(r)
+    out.append(f"  {f'tier {t} · {LOT_TIER_LABEL[t]}' if t else 'not sorted'} · "
+               f"{r.get('status') or 'parked'} · {r.get('theme') or 'other'}"
+               + (" · the owner asked for it" if r.get("owner_said") else ""))
+    src = r.get("source") if isinstance(r.get("source"), dict) else {}
+    kind, ref = src.get("kind"), src.get("ref")
+    where = " · ".join(x for x in (
+        f"session {src['session_id']}" if src.get("session_id") else "",
+        f"{kind} {ref}" if ref else (kind if kind and kind != "session" else "")) if x)
+    if where or src.get("quote"):
+        out.append(f"  from: {where or '?'}" + (f' — "{src["quote"]}"' if src.get("quote") else ""))
+    if r.get("first_move"):
+        out.append(f"  FIRST MOVE: {r['first_move']}")
+    if full:
+        links = r.get("links") if isinstance(r.get("links"), dict) else {}
+        for label, v in (("linear", links.get("linear")), ("prs", ", ".join(links.get("prs") or [])),
+                         ("spec", links.get("spec")),
+                         ("revisit when", "; ".join(r.get("revisit_when") or []))):
+            if v:
+                out.append(f"  {label}: {v}")
+        out.append(f"  created {str(r.get('created'))[:10]} · touched {str(r.get('last_touched'))[:10]}"
+                   f" · {len(r.get('history') or [])} change(s)")
+        out.append(f"  {LOT_DIR / (str(r.get('id')) + '.json')}")
+    return out
+
+
 def load_connectors(broken: list[dict]) -> list[dict]:
     """Index the connector pointers under $RECALL_HOME/connectors/*.jsonl.
 
@@ -734,6 +875,17 @@ def _push_channel():
 _push_channel.mod = None
 
 
+# Sources that are pointers or plans rather than lessons. None of them reaches
+# the push channel, so an injection-coverage number or a cut-off audit that
+# counted them would move without anything getting harder to reach. One list,
+# so the next source is excluded everywhere at once instead of at four sites.
+NOT_LESSONS = ("is_spec", "is_hub", "is_connector", "is_receipt", "is_orphan", "is_lot")
+
+
+def is_pointer(e: dict) -> bool:
+    return any(e.get(f) for f in NOT_LESSONS)
+
+
 def show(e: dict, score: float | None = None, hits: list[str] | None = None,
          full: bool = False, judged: float | None = None) -> None:
     r = e["raw"]
@@ -747,11 +899,13 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None,
     if judged is not None:
         line = f"  judged {judged:.2f}" + line
     print(f"\n{head}\n{tag}" + line)
+    if e.get("is_lot"):
+        print("\n".join(lot_lines(r, full)))
+        return
     body = _first(r, DISPLAY_BODY) or _longest_unknown(r) or ""
     body = " ".join(str(body).split())
     print("  " + (body if full else body[:BODY_CAP] + ("…" if len(body) > BODY_CAP else "")))
-    if (e.get("is_spec") or e.get("is_hub") or e.get("is_connector")
-            or e.get("is_receipt") or e.get("is_orphan")):
+    if is_pointer(e):
         # A spec has no fix. Its state and its path are what a reader needs
         # next, and the path is the whole point of retrieving it.
         meta = " · ".join(x for x in (r.get("doc_type"), r.get("spec_status"),
@@ -975,9 +1129,7 @@ def truncated_fixes(entries: list[dict]) -> list[dict]:
         # fires, uncut -- so measuring them against push's cap counts a
         # truncation that cannot happen. Left in and the number moves by 9.
         # Specs never reach it either, and for the same reason.
-        if e.get("is_rule") or e.get("is_spec") or e.get("is_hub") \
-                or e.get("is_connector") or e.get("is_receipt") \
-                or e.get("is_orphan"):
+        if e.get("is_rule") or is_pointer(e):
             continue
         raw = e["raw"]
         parts = [("what to do", push.remedy(raw)), ("body", push.summarize(raw))]
@@ -1117,6 +1269,8 @@ def main() -> int:
                     help="search only the published hub (specs, plans, playbooks, prototypes)")
     ap.add_argument("--connectors", action="store_true",
                     help="search only connector pointers (Slack, Gmail, meetings)")
+    ap.add_argument("--lot", action="store_true",
+                    help="the parking lot: list open items, or search only them")
     ap.add_argument("--stats", action="store_true")
     a = ap.parse_args()
 
@@ -1127,10 +1281,19 @@ def main() -> int:
         entries = [e for e in entries if e.get("is_hub")]
     if a.connectors:
         entries = [e for e in entries if e.get("is_connector")]
+    if a.lot:
+        entries = [e for e in entries if e.get("is_lot")]
     for b in getattr(load_entries, "broken", []):
         sys.stderr.write(
             f"recall: {b['catalog']} catalog did not parse and is EXCLUDED from these "
             f"results — {b['path']}: {b['error']}\n")
+    # Before the empty-corpus guard: the lot does not depend on the catalogs,
+    # and an empty lot is a clean answer, not a broken install.
+    if a.lot and not a.query and not a.id and not a.stats:
+        items = lot_order([e["raw"] for e in entries])
+        print(json.dumps(items, indent=2) if a.json
+              else lot_table(items, lot_tier1_open(items)))
+        return 0
     # A freshly installed corpus is EMPTY, and install.sh tells the user to run
     # `recall.py --stats` first. Treating zero entries as "no readable catalogs"
     # made a correct empty state indistinguishable from a broken install, and
@@ -1144,10 +1307,7 @@ def main() -> int:
         # Rules are not in the injection index by design -- they arrive when
         # their skill fires -- so scoring them here would move a tracked
         # percentage without anything becoming less reachable.
-        cat = [e for e in entries if not e.get("is_rule")
-               and not e.get("is_spec") and not e.get("is_hub")
-               and not e.get("is_connector") and not e.get("is_receipt")
-               and not e.get("is_orphan")]
+        cat = [e for e in entries if not e.get("is_rule") and not is_pointer(e)]
         rules = [e for e in entries if e.get("is_rule")]
         specs = [e for e in entries if e.get("is_spec")]
         unreachable = [e for e in cat if e["key"] not in idx]
@@ -1266,10 +1426,7 @@ def main() -> int:
         # Specs are unreachable by injection by design -- no probe_when, and
         # none is wanted -- so listing them here would bury the entries this
         # mode exists to surface under a growing pile working as intended.
-        sel = [e for e in entries
-               if not e.get("is_spec") and not e.get("is_hub")
-               and not e.get("is_connector") and not e.get("is_receipt")
-               and not e.get("is_orphan") and e["key"] not in idx][:a.limit]
+        sel = [e for e in entries if not is_pointer(e) and e["key"] not in idx][:a.limit]
     elif a.stubs:
         # An id with no body AND no fix is indistinguishable from a covered
         # lesson in every count, and cannot be acted on by anyone. The id still
@@ -1281,7 +1438,10 @@ def main() -> int:
         FIX = ("fix_pattern", "fix", "affected_pattern", "why")
         def _empty(e, keys):
             return not any(str(e["raw"].get(k) or "").strip() for k in keys)
-        sel = [e for e in entries if _empty(e, BODY) and _empty(e, FIX)][:a.limit]
+        # A parked item is a plan with a title and a first move, never a
+        # lesson, so it is not a stub for lacking one.
+        sel = [e for e in entries if not e.get("is_lot")
+               and _empty(e, BODY) and _empty(e, FIX)][:a.limit]
     elif a.query:
         q = " ".join(a.query)
         ranked = bm25(entries, q)

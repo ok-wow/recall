@@ -117,6 +117,7 @@ def run(d: Path, *args: str, surfaced_log: str | None = None) -> tuple[int, str]
            # added later silently pulls a real store into a fixture test.
            "RECALL_RECEIPT_DIR": str(d / "none-receipts"),
            "RECALL_ORPHAN_INDEX": str(d / "none-orphans.yaml"),
+           "RECALL_LOT_DIR": str(d / "none-lot"),
            "RECALL_SURFACED_LOG": surfaced_log or str(d / "surfaced.jsonl")}
     p = subprocess.run([sys.executable, str(RECALL), *args],
                        capture_output=True, text=True, env=env)
@@ -226,6 +227,7 @@ def main() -> int:
            # added later silently pulls a real store into a fixture test.
            "RECALL_RECEIPT_DIR": str(d / "none-receipts"),
            "RECALL_ORPHAN_INDEX": str(d / "none-orphans.yaml"),
+           "RECALL_LOT_DIR": str(d / "none-lot"),
            "RECALL_SURFACED_LOG": str(plog), "RECALL_HOME": str(d / "fake-home")}
     subprocess.run([sys.executable, str(RECALL), "--hidden"],
                    capture_output=True, text=True, env=env)
