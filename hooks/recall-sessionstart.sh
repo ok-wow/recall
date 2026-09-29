@@ -263,9 +263,7 @@ fi
 # size at each compaction; this compares the earliest record for that session
 # against the size now, and speaks only when it did not grow.
 #
-# Claude Code only. Codex has no PreCompact event, so the log stays empty there
-# and this block is silently inert -- which is the correct behaviour, not a gap
-# to paper over.
+# Claude Code and Codex both fire PreCompact, so both hosts write this log.
 COMPACTION_LOG="${RECALL_COMPACTION_LOG:-$RECALL_HOME/compaction-log.jsonl}"
 if [ -r "$COMPACTION_LOG" ]; then
   CW=$(RECALL_CATALOG_DIR="$RECALL_CATALOG_DIR" python3 - "$COMPACTION_LOG" <<'PYEOF' 2>/dev/null || true

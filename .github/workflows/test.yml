@@ -73,9 +73,8 @@ jobs:
           python3 - <<'PY'
           import json, os
           d = json.load(open(os.environ["HOME"] + "/.claude/settings.json"))
-          # Claude Code gets a fifth hook, PreCompact. tests/test_install_hosts.py
-          # owns this list (EVENTS | HOST_ONLY["claude"]) and fails if the two
-          # ever disagree. This copy went stale once already: main was red for a
+          # Five hooks, PreCompact included. tests/test_install_hosts.py owns
+          # this list (EVENTS) and fails if the two ever disagree. This copy went stale once already: main was red for a
           # week after the witness hook landed and only the suite was updated.
           want = {"SessionEnd", "SessionStart", "UserPromptSubmit", "PostToolUse", "PreCompact"}
           got = set(d.get("hooks", {}))

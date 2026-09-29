@@ -22,11 +22,12 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-EVENTS = {"SessionEnd", "SessionStart", "UserPromptSubmit", "PostToolUse"}
-# PreCompact exists in Claude Code and not in Codex, whose event list is
-# PreToolUse/SessionStart/UserPromptSubmit/Stop/SessionEnd/PostToolUse. Wiring
-# an event a host never fires would look installed and do nothing.
-HOST_ONLY = {"claude": {"PreCompact"}, "codex": set()}
+# Both hosts get all five. PreCompact was Claude-only until Codex added it; its
+# hooks docs now list PreCompact with the same `trigger` field.
+EVENTS = {"SessionEnd", "SessionStart", "UserPromptSubmit", "PostToolUse", "PreCompact"}
+# Where each host reads user skills from. Codex reads ~/.agents/skills, and a
+# link under ~/.codex/skills looked installed while Codex never saw it.
+SKILL_LINK = {"claude": ".claude/skills/compound", "codex": ".agents/skills/compound"}
 
 fails: list[str] = []
 
@@ -53,6 +54,11 @@ def hosts_case(host: str, config_rel: str, seed: str) -> None:
         cfg = home / config_rel
         cfg.parent.mkdir(parents=True, exist_ok=True)
         cfg.write_text(seed)
+        # the link an earlier installer left where Codex never looked
+        legacy = home / ".codex" / "skills" / "compound"
+        if host == "codex":
+            legacy.parent.mkdir(parents=True)
+            legacy.symlink_to(REPO / "skills" / "compound")
         (home / "bin").mkdir()
         shim = home / "bin" / "launchctl"       # never touch the real launchd
         shim.write_text("#!/bin/sh\nexit 0\n")
@@ -64,20 +70,16 @@ def hosts_case(host: str, config_rel: str, seed: str) -> None:
 
         d = json.loads(cfg.read_text())
         got = set(d.get("hooks", {}))
-        want = EVENTS | HOST_ONLY[host]
-        check(f"[{host}] events registered in {config_rel}", got == want, str(sorted(got)))
-        # The guard that matters: Codex must NOT be wired for an event it has no
-        # concept of, and Claude MUST be wired for the one only it can fire.
-        for other, only in HOST_ONLY.items():
-            if other != host:
-                for ev in only:
-                    check(f"[{host}] does not register {ev}", ev not in got)
+        check(f"[{host}] events registered in {config_rel}", got == EVENTS, str(sorted(got)))
+        check(f"[{host}] PreCompact runs the compaction witness",
+              any(h["command"].endswith("recall-compaction-witness.py")
+                  for e in d.get("hooks", {}).get("PreCompact", []) for h in e["hooks"]))
         cmds = [h["command"] for v in d.get("hooks", {}).values()
                 for e in v for h in e.get("hooks", [])]
         check(f"[{host}] commands point into the repo", all(str(REPO) in c for c in cmds))
 
-        link = home / config_rel.split("/")[0] / "skills" / "compound"
-        check(f"[{host}] skill linked", link.is_symlink())
+        link = home / SKILL_LINK[host]
+        check(f"[{host}] skill linked where {host} reads skills", link.is_symlink())
         check(f"[{host}] skill readable through the link",
               (link / "SKILL.md").is_file())
 
@@ -86,6 +88,8 @@ def hosts_case(host: str, config_rel: str, seed: str) -> None:
         d2 = json.loads(cfg.read_text())
         check(f"[{host}] hooks removed", not d2.get("hooks"), str(d2.get("hooks")))
         check(f"[{host}] skill unlinked", not link.exists())
+        if host == "codex":
+            check("[codex] the old ~/.codex/skills link is removed too", not legacy.is_symlink())
         # State is the user's corpus; an uninstall that deletes it is not an uninstall.
         check(f"[{host}] catalogs survive uninstall",
               (home / "state" / "catalogs" / "FAILURE_MODES.yaml").is_file())
@@ -116,11 +120,11 @@ _m = re.search(r"want = \{([^}]*)\}", _wf)
 _ci = set(re.findall(r'"([A-Za-z]+)"', _m.group(1))) if _m else set()
 check(
     "fresh-clone CI job expects the same claude events as this suite",
-    _ci == EVENTS | HOST_ONLY["claude"],
+    _ci == EVENTS,
     f"workflow has {sorted(_ci)}",
 )
 
-TOTAL = 11 * 2 + 2 + 1
+TOTAL = 11 * 2 + 1 + 2 + 1
 if fails:
     print(f"FAIL {len(fails)} check(s):")
     for f in fails:

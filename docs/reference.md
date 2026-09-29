@@ -74,7 +74,7 @@ written down. It cannot intervene: a hook is a shell command, there is no agent
 mid-thought to instruct, and blocking a compaction on a full context strands the
 session with no way forward. So it counts instead, because nothing else counts
 this, and you cannot tell whether a backstop is load-bearing until you know how
-often it was bypassed. (Claude Code only — Codex has no such event.)
+often it was bypassed. (Claude Code and Codex both fire this event.)
 
 A lesson captured at the moment it is learned carries what it actually cost. The
 same lesson reconstructed from a transcript three hours later carries a summary of
