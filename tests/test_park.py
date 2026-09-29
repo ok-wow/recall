@@ -38,6 +38,7 @@ def env_for(d: Path, lot: Path | None = None, **extra: str) -> dict:
     env.update({"HOME": str(d / "home"),
                 "RECALL_HOME": str(d / "recall-home"),
                 "RECALL_LOT_DIR": str(lot or d / "lot"),
+                "RECALL_SPECS_DIR": str(d / "no-specs"),
                 "RECALL_SESSION_ID": "sess-test"})
     env.update(extra)
     return env

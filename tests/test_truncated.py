@@ -79,6 +79,7 @@ def run(d: Path, *args):
            "RECALL_RECEIPT_DIR": str(d / "none-receipts"),
            "RECALL_ORPHAN_INDEX": str(d / "none-orphans.yaml"),
            "RECALL_LOT_DIR": str(d / "none-lot"),
+           "RECALL_SPECS_DIR": str(d / "none-specs-dir"),
            "RECALL_SURFACED_LOG": str(d / "surfaced.jsonl")}
     p = subprocess.run([sys.executable, str(RECALL), *args],
                        capture_output=True, text=True, env=env)

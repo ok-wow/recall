@@ -523,13 +523,9 @@ def cmd_export(a, session) -> int:
     return OK
 
 
-HEADING = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
 # "starts with Parked or Deferred", after an optional "3." or "5b)" number.
 PARKED = re.compile(r"^(?:\d+[a-z]?[.)]\s*)?(?:parked|deferred)", re.I)
 BULLET = re.compile(r"^( *)(?:[-*+]|\d+[.)])\s+")
-ROW = re.compile(r"^\s*\|.*\|\s*$")
-RULE = re.compile(r"^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$")
-FENCE = re.compile(r"^\s*(```|~~~)")
 LOT_REF = re.compile(r"\blot:([a-z0-9]+(?:-[a-z0-9]+)*)")
 
 
@@ -539,12 +535,12 @@ def parked_lines(text: str) -> tuple[int, list[tuple[int, str]]]:
     it, so a reference anywhere in the block counts."""
     sections, found, level, fenced, current = 0, [], None, False, None
     for n, line in enumerate(text.splitlines(), 1):
-        if FENCE.match(line):
+        if R.MD_FENCE.match(line):
             fenced = not fenced
             continue
         if fenced:
             continue
-        h = HEADING.match(line)
+        h = R.MD_HEADING.match(line)
         if h:
             current = None
             if level is not None and len(h.group(1)) <= level:
@@ -554,9 +550,9 @@ def parked_lines(text: str) -> tuple[int, list[tuple[int, str]]]:
             continue
         if level is None:
             continue
-        if ROW.match(line):
+        if R.MD_ROW.match(line):
             current = None
-            if RULE.match(line):
+            if R.MD_RULE.match(line):
                 if found and found[-1][2] == "row" and found[-1][0] == n - 1:
                     found.pop()          # the row above a rule is the header
                 continue

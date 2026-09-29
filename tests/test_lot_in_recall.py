@@ -42,6 +42,7 @@ def env_for(d: Path) -> dict:
                 "RECALL_HOME": str(d / "recall-home"),
                 "RECALL_CATALOG_DIR": str(d / "catalogs"),
                 "RECALL_LOT_DIR": str(d / "lot"),
+                "RECALL_SPECS_DIR": str(d / "no-specs"),
                 "RECALL_SKILLS_DIR": str(d / "no-skills"),
                 "RECALL_SPECS_INDEX": str(d / "no-specs.txt"),
                 "RECALL_HUB_INDEX": str(d / "no-hub.json"),
@@ -82,9 +83,14 @@ def runs_the_lot_readers(text: str) -> bool:
                 or ("recall.py" in text and LOADS.search(text)))
 
 
+# Stores whose default lives under $HOME and that a fixture must never read.
+# The specs folder joined when recall started reading decision logs from it.
+MUST_PIN = ("RECALL_LOT_DIR", "RECALL_SPECS_DIR")
+
+
 def unpinned_suites(texts: dict[str, str]) -> list[str]:
     return sorted(n for n, t in texts.items()
-                  if runs_the_lot_readers(t) and '"RECALL_LOT_DIR"' not in t)
+                  if runs_the_lot_readers(t) and any(f'"{v}"' not in t for v in MUST_PIN))
 
 
 def main() -> int:
@@ -219,7 +225,8 @@ def main() -> int:
     here = Path(__file__).resolve().parent
     texts = {t.name: t.read_text() for t in here.glob("test_*.py")}
     missing = unpinned_suites(texts)
-    check("every suite that runs recall.py or park.py pins RECALL_LOT_DIR", not missing, str(missing))
+    check("every suite that runs recall.py or park.py pins the lot and the specs folder",
+          not missing, str(missing))
     check("the scan sees the suites it has to guard",
           {"test_recall.py", "test_park.py", "test_lot_in_recall.py"}
           <= {n for n, t in texts.items() if runs_the_lot_readers(t)})
@@ -227,8 +234,10 @@ def main() -> int:
     unpinned = ('RECALL = SCRIPT_DIR / "recall.py"\n'
                 'p = subprocess.run([sys.executable, str(RECALL), "q"], env=env)\n')
     check("control: an unpinned suite is caught", unpinned_suites({"x.py": unpinned}) == ["x.py"])
-    check("control: a pinned suite passes",
-          unpinned_suites({"x.py": unpinned + '"RECALL_LOT_DIR": str(d)\n'}) == [])
+    check("control: a suite that pins only one of them is caught",
+          unpinned_suites({"x.py": unpinned + '"RECALL_LOT_DIR": str(d)\n'}) == ["x.py"])
+    check("control: a fully pinned suite passes",
+          unpinned_suites({"x.py": unpinned + '"RECALL_LOT_DIR": str(d)\n"RECALL_SPECS_DIR": str(d)\n'}) == [])
     check("control: naming recall.py without running it is out of scope",
           unpinned_suites({"x.py": '(d / "recall.py").write_text("x")\nsubprocess.run(["bash"])\n'}) == [])
 
