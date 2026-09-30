@@ -168,13 +168,39 @@ def main() -> int:
     rc, out = park(d, "add", "--title", "Slack sync needs retries when rate limited", "--new")
     check("--new parks it anyway", rc == 0, f"rc={rc} {out[:120]}")
 
-    # The threshold, from both sides. Jaccard on the folded title tokens.
+    # The threshold, from both sides: the share of the SHORTER title's content
+    # words that the other title has. Stop words (a, the, to, on ...) do not count.
     d = root / "threshold"
-    park(d, "add", "--title", "alpha bravo charlie delta")
-    rc, _ = park(d, "add", "--title", "alpha bravo charlie echo foxtrot")        # 3/6 = 0.50
-    check("overlap of exactly one half is a duplicate", rc == 3, f"rc={rc}")
-    rc, _ = park(d, "add", "--title", "alpha bravo charlie echo foxtrot golf")   # 3/7 = 0.43
-    check("overlap just under one half is not", rc == 0, f"rc={rc}")
+    park(d, "add", "--title", "alpha bravo charlie delta echo")
+    rc, _ = park(d, "add", "--title", "alpha bravo charlie delta")               # 4/4 of the shorter
+    check("a title whose words are all in an open item is a duplicate", rc == 3, f"rc={rc}")
+    rc, _ = park(d, "add", "--title", "alpha bravo charlie delta golf")          # 4/5 = 0.80
+    check("overlap of exactly four fifths is a duplicate", rc == 3, f"rc={rc}")
+    rc, _ = park(d, "add", "--title", "alpha bravo charlie golf hotel")          # 3/5 = 0.60
+    check("overlap of three fifths is not", rc == 0, f"rc={rc}")
+    rc, _ = park(d, "add", "--title", "The alpha bravo charlie delta echo for a")
+    check("stop words are ignored in the comparison", rc == 3, f"rc={rc}")
+
+    # The review's examples: distinct work on a shared subject must both park.
+    d = root / "distinct"
+    rc, _ = park(d, "add", "--title", "Add a retry to the queue consumer")
+    rc2, out = park(d, "add", "--title", "Add a timeout to the queue consumer")
+    check("a retry and a timeout on the same consumer are two items", rc == 0 and rc2 == 0,
+          f"rc={rc},{rc2} {out[:160]}")
+    rc, _ = park(d, "add", "--title", "Migrate the billing service")
+    rc2, out = park(d, "add", "--title", "Migrate the search service")
+    check("two migrations of different services are two items", rc == 0 and rc2 == 0,
+          f"rc={rc},{rc2} {out[:160]}")
+    rc, _ = park(d, "add", "--title", "Retry the Slack sync on rate limits")
+    rc2, out = park(d, "add", "--title", "Slack sync: retry on rate limits")
+    check("the same task in different words is still refused", rc == 0 and rc2 == 3,
+          f"rc={rc},{rc2} {out[:160]}")
+    rc, _ = park(d, "add", "--title", "Rotate the keys!")
+    rc2, _ = park(d, "add", "--title", "rotate  the KEYS")
+    check("titles with the same slug are the same item", rc == 0 and rc2 == 3, f"rc={rc},{rc2}")
+    rc, out = park(d, "add", "--title", "Slack sync: retry on rate limits")
+    check("the refusal names both ways out, same task first",
+          0 < out.find("park.py set") < out.find("--new"), out[:400])
     body = ("The export job writes a partial CSV when the warehouse query times out, and the "
             "downstream import treats the partial file as complete and overwrites good rows.")
     park(d, "add", "--title", "Export job truncation", "--body", body)
@@ -311,7 +337,7 @@ def main() -> int:
         "{this is not json",
         {"title": "Canvas zoom snaps back on trackpad", "theme": "canvas",
          "revisit_when": ["a second report"]},
-        {"title": "Connector token refresh should be cached", "revisit_when": ["token errors in logs"]},
+        {"title": "Connector token refresh: cache the results", "revisit_when": ["token errors in logs"]},
         {"title": "Unknown theme line", "theme": "vibes"},
         "",
         {"title": "Deck export drops custom fonts", "theme": "decks", "owner_said": True,
@@ -415,6 +441,22 @@ def main() -> int:
     rc, out = park(d, "check", str(table))
     check("a Deferred table is checked row by row, header skipped",
           rc == 1 and "export job retry" in out and "| item |" not in out, f"rc={rc} {out[:300]}")
+
+    # Headings the real handoffs use for left-over work, one check each. A
+    # bare bullet under each has no lot ref, so check must fail on it.
+    for head in ("Parking lot", "Backlog", "Follow-ups", "Follow ups", "Later", "Not done",
+                 "Open items", "Next session", "3. Follow-ups", "### Backlog (parking-lot candidates)"):
+        text = head if head.startswith("#") else f"## {head}"
+        h = handoff(f"# Handoff\n\n{text}\n- export job retry\n")
+        rc, out = park(d, "check", str(h))
+        check(f"check reads a '{head}' heading", rc == 1 and "export job retry" in out, f"rc={rc} {out[:200]}")
+    prose = handoff("# Handoff\n\n## Decisions\n- export job retry\n\n"
+                    "Parking is expensive, so we kept the lot small.\n- a bullet after prose\n")
+    rc, out = park(d, "check", str(prose))
+    check("a Decisions heading and a prose line that starts with Parking are not headings",
+          rc == 0, f"rc={rc} {out[:200]}")
+    rc, out = park(d, "check", str(handoff("## Latest news\n- export job retry\n")))
+    check("Latest is not Later", rc == 0, f"rc={rc} {out[:200]}")
 
     none = handoff("""# Handoff\n\n## Done\n- a thing\n\n```\n## Parked\n- inside a code block\n```\n""")
     rc, out = park(d, "check", str(none))
