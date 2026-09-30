@@ -52,11 +52,12 @@ ID_MAX, TITLE_MAX, QUOTE_MAX = 60, 160, 200
 ID_SHAPE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 OK, NOT_FOUND, BAD, DUPLICATE, TIER1_FULL, WRITE_FAILED = 0, 1, 2, 3, 4, 5
 
-# Half the words shared, on the title alone or on title plus body, is the same
-# item. Tested from both sides: 3 of 6 distinct words shared is a duplicate,
-# 3 of 7 is not. A false match costs the caller one --new; a missed one leaves
-# two items that drift apart, which is the failure the lot exists to end.
-DUPLICATE_OVERLAP = 0.5
+# Four fifths of the shorter side's content words shared, on the title alone or
+# on title plus body, is the same item; so are two titles with one slug. Stop
+# words do not count ("a retry to the queue consumer" vs "a timeout to the queue
+# consumer" is 3 of 4 content words: two tasks). A false refusal drops a task;
+# a missed match leaves two items that drift apart, and --new covers a real miss.
+DUPLICATE_OVERLAP = 0.8
 # recall's tokenizer does not stem, so "retries" and "retry" never met. A crude
 # fold is enough here: both sides get the same fold, so it only has to agree
 # with itself, not with English.
@@ -143,13 +144,18 @@ def make_item(f: dict, session: str | None) -> dict:
     }
 
 
-def new_id(title: str, taken: set[str]) -> str:
+def slugify(title: str) -> str:
     flat = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()
     base = re.sub(r"[^a-z0-9]+", "-", flat.lower()).strip("-") or "item"
     if len(base) > ID_MAX:
         cut = base[:ID_MAX + 1]
         # Whole words when there are any; a 61-character word is cut hard.
         base = (cut.rsplit("-", 1)[0] if "-" in cut else cut[:ID_MAX]).strip("-")
+    return base
+
+
+def new_id(title: str, taken: set[str]) -> str:
+    base = slugify(title)
     iid, n = base, 2
     while iid in taken:
         tail = f"-{n}"
@@ -186,7 +192,8 @@ def words(text: str) -> set[str]:
 
 
 def overlap(a: set, b: set) -> float:
-    return len(a & b) / len(a | b) if a and b else 0.0
+    """Share of the shorter side's words that the other side also has."""
+    return len(a & b) / min(len(a), len(b)) if a and b else 0.0
 
 
 def duplicate_of(item: dict, items: list[dict]):
@@ -196,8 +203,11 @@ def duplicate_of(item: dict, items: list[dict]):
     for other in items:
         if other["id"] == item.get("id") or not is_open(other):
             continue
-        score = max(overlap(title, words(str(other.get("title") or ""))),
-                    overlap(full, words(f"{other.get('title') or ''} {other.get('body') or ''}")))
+        other_title = str(other.get("title") or "")
+        score = max(overlap(title, words(other_title)),
+                    overlap(full, words(f"{other_title} {other.get('body') or ''}")))
+        if slugify(item["title"]) == slugify(other_title):
+            score = 1.0
         if score >= DUPLICATE_OVERLAP and (best is None or score > best[1]):
             best = (other, score)
     return best
@@ -291,8 +301,9 @@ def park_new(item: dict, items: list[dict], session, change: str,
                 DUPLICATE, f"an open item already says this ({round(100 * score)}% the same "
                            f"words): {other['id']}",
                 {"duplicate_of": other["id"], "overlap": round(score, 2), "item": other},
-                "\n".join(R.lot_lines(other)) + f"\n\n  update it:   park.py set {other['id']} ...\n"
-                "  or, if this really is a different piece of work, add it again with --new")
+                "\n".join(R.lot_lines(other))
+                + f"\n\n  same task:       park.py set {other['id']} ...\n"
+                "  different task:  add it again with --new")
     check_tier1(item, items)
     item["id"] = item["id"] or new_id(item["title"], taken)
     record(item, f"{change} in {tier_text(item['tier'])}", session)
@@ -523,15 +534,18 @@ def cmd_export(a, session) -> int:
     return OK
 
 
-# "starts with Parked or Deferred", after an optional "3." or "5b)" number.
-PARKED = re.compile(r"^(?:\d+[a-z]?[.)]\s*)?(?:parked|deferred)", re.I)
+# A heading that starts with a word handoffs use for work left over, after an
+# optional "3." or "5b)" number. "Decisions" and "Done" are not among them.
+PARKED = re.compile(
+    r"^(?:\d+[a-z]?[.)]\s*)?(?:parked|parking|deferred|backlog|follow[- ]?ups?|later|not done"
+    r"|open items|next session)\b", re.I)
 BULLET = re.compile(r"^( *)(?:[-*+]|\d+[.)])\s+")
 LOT_REF = re.compile(r"\blot:([a-z0-9]+(?:-[a-z0-9]+)*)")
 
 
 def parked_lines(text: str) -> tuple[int, list[tuple[int, str]]]:
-    """Every bullet and table row under a heading that starts with Parked or
-    Deferred, with the line it starts on. A bullet's nested lines belong to
+    """Every bullet and table row under a heading that starts with Parked,
+    Deferred, Backlog, Follow-ups and the like, with the line it starts on. A bullet's nested lines belong to
     it, so a reference anywhere in the block counts."""
     sections, found, level, fenced, current = 0, [], None, False, None
     for n, line in enumerate(text.splitlines(), 1):
