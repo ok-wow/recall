@@ -20,15 +20,15 @@ Usage:
     enqueue_backfill.py --apply    # actually write markers
 """
 import json
+import os
 import sys
 from pathlib import Path
 
-# Historical session dirs to mine. macOS is case-insensitive, so the capital-D
-# Documents/Developer slug and the lowercase one resolve to the same place.
-SESSIONS_DIRS = [
-    Path.home() / ".claude/projects/-Users-shalin-Documents-Developer",
-    Path.home() / ".claude/projects/-Users-shalin-dev",
-]
+# Historical session dirs to mine: every project folder the host keeps, or the
+# ones named in RECALL_SESSIONS_DIRS (colon-separated).
+_env_dirs = os.environ.get("RECALL_SESSIONS_DIRS", "")
+SESSIONS_DIRS = ([Path(d).expanduser() for d in _env_dirs.split(":") if d]
+                 or sorted(p for p in (Path.home() / ".claude/projects").glob("*") if p.is_dir()))
 BACKFILL_DIR = Path.home() / ".claude/.okwow-compound-backfill"
 PENDING_DIR = Path.home() / ".claude/.okwow-compound-pending"
 LEDGER = BACKFILL_DIR / "_enqueued.json"          # session_ids ever enqueued
