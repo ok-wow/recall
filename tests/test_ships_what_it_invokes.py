@@ -119,6 +119,18 @@ for src in shipped_sources():
 for var in sorted(set_by_tests - read_by_code):
     check(f"tests set {var} but no shipped code reads it — that isolation is imaginary", False)
 
+# The README's commands are the ones a new user types verbatim, so a script it
+# names that this repo does not ship is a command-not-found on day one.
+README_SCRIPT = re.compile(r"scripts/([A-Za-z0-9_.-]+\.(?:py|sh))\b")
+
+
+def missing_documented(text: str) -> set[str]:
+    return {n for n in README_SCRIPT.findall(text) if not (ROOT / "scripts" / n).is_file()}
+
+
+for name in sorted(missing_documented((ROOT / "README.md").read_text())):
+    check(f"README.md names scripts/{name}, which this repo does not ship", False)
+
 # -- negative controls: a check that cannot fail proves nothing --------------
 check("scanner detects a missing skill",
       missing_skills('-p "/nosuchskill abc"', skill_exists) == {"nosuchskill"})
@@ -128,11 +140,14 @@ check("scanner resolves $SKILL_DIR against scripts/, not the referring dir",
       missing_siblings('"$SKILL_DIR/recall.py"', ROOT / "hooks") == set())
 check("scanner does not flag a skill that IS shipped",
       missing_skills('-p "/compound abc"', skill_exists) == set())
+check("scanner detects a README naming a script that is not shipped",
+      missing_documented("python3 ~/recall/scripts/park.py list\n"
+                         "python3 ~/recall/scripts/nope.py") == {"nope.py"})
 
-total = 5 + 4
+total = 5 + 5
 if fails:
     print(f"FAIL {len(fails)} check(s):")
     for f in fails:
         print(f"  - {f}")
     sys.exit(1)
-print(f"PASS {total}/{total} invocation-resolution checks (4 controls)")
+print(f"PASS {total}/{total} invocation-resolution checks (5 controls)")

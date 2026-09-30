@@ -148,6 +148,40 @@ python3 ~/recall/scripts/recall.py "how do we handle a renewal that slipped"
 
 There is an uninstaller and it puts everything back.
 
+## Work you said you would do later
+
+Every session ends with a few things you decided not to do yet. They used to go
+into a handoff paragraph, and nothing ever put that paragraph in front of anyone
+again. Later quietly turned into never, and you could not tell which items had.
+
+So Recall keeps a parking lot. Any session can park an item, and a plain
+question finds it again, right next to the lessons:
+
+```bash
+python3 ~/recall/scripts/park.py add --title "Retry the Slack sync on rate limits" --tier 2
+python3 ~/recall/scripts/park.py list        # tier 1, then 2, then 3, then the unsorted inbox
+python3 ~/recall/scripts/park.py set <id> --tier 1
+python3 ~/recall/scripts/park.py done <id>
+python3 ~/recall/scripts/park.py kill <id> --why "the new sync made it moot"
+python3 ~/recall/scripts/recall.py "what did we park about slack"
+```
+
+**Tier 1 holds five items. Not six.** A sixth is refused, the five are listed,
+and there is no flag to force it. You demote one first. That is the point: a
+"do next" list where everything is urgent is a list you stop reading, and a hard
+cap is the only thing that keeps the words meaning something.
+
+**Parking the same thing twice is caught.** An item that says what an open one
+already says is refused, and you are shown the open one. Ten sessions noticing
+the same problem should update one item, not leave ten.
+
+Each item is one small file under `~/.recall/lot/items`, so parallel sessions
+never fight over a shared list. `park.py export --to <dir>` writes the open ones
+out as markdown you can commit.
+
+It does not nag you yet. Nothing puts the lot in front of you when a session
+starts. You ask for it, or a question you ask finds it.
+
 ## Honestly
 
 Recall cannot prove it made anything better. It can show you that a lesson

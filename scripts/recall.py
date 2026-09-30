@@ -15,9 +15,10 @@ precision can be looser than the injector's without teaching anyone to ignore a
 channel. The precise literal matcher stays exactly as it is for auto-injection.
 
     recall.py "worktree node_modules symlink"   # ranked search
-    recall.py --specs "clarification form"      # the spec corpus only
+    recall.py --specs "clarification form"      # the spec corpus and its decisions
     recall.py --hub "prototype"                 # the published hub, with URLs
     recall.py --connectors "pricing"            # Slack / Gmail / meeting pointers
+    recall.py --lot                             # parked work, most urgent first
     recall.py --id <entry-id>                   # one entry in full
     recall.py --recurring                       # lessons that repeated anyway
     recall.py --unreachable                     # entries auto-injection cannot see
@@ -83,6 +84,11 @@ SURFACED_LOG = env_path("RECALL_SURFACED_LOG", "OKWOW_PROBE_SURFACED_LOG",
 # load_specs -- and until 2026-09-21 it was read by nothing.
 SPECS_INDEX = env_path("RECALL_SPECS_INDEX", "OKWOW_SPECS_INDEX",
                        Path.home() / "dev/specs/llms.txt")
+# The spec folders themselves, for the decision logs inside them. Follows the
+# index unless set, so a suite that moves the index moves this with it.
+SPECS_DIR = env_path("RECALL_SPECS_DIR", "OKWOW_SPECS_DIR", SPECS_INDEX.parent)
+# Both are also read as this ref has them; see load_specs and _specs_on_main.
+SPECS_REF = "origin/main"
 # The published hub -- specs, plans, playbooks, prototypes, strategy, pulse.
 # Also an index that already existed and was read by nothing. See load_hub.
 HUB_INDEX = env_path("RECALL_HUB_INDEX", "OKWOW_HUB_INDEX",
@@ -96,6 +102,9 @@ ORPHAN_INDEX = env_path("RECALL_ORPHAN_INDEX", "OKWOW_ORPHAN_INDEX",
                         Path.home() / ".claude/skills/_orphans/learnings.yaml")
 CONNECTOR_DIR = env_path("RECALL_CONNECTOR_DIR", "OKWOW_CONNECTOR_DIR",
                          RECALL_HOME / "connectors")
+# Work somebody decided to do later, one JSON file per item, written by
+# park.py. See read_lot.
+LOT_DIR = env_path("RECALL_LOT_DIR", "OKWOW_LOT_DIR", RECALL_HOME / "lot" / "items")
 
 WORD = re.compile(r"[a-z0-9][a-z0-9._/-]*", re.I)
 # Ordinary English that carries no retrieval signal. Deliberately short: BM25's
@@ -204,10 +213,12 @@ def load_entries() -> list[dict]:
             })
     entries.extend(load_rules(broken))
     entries.extend(load_specs(broken))
+    entries.extend(load_decisions(broken))
     entries.extend(load_hub(broken))
     entries.extend(load_connectors(broken))
     entries.extend(load_receipts(broken))
     entries.extend(load_orphans(broken))
+    entries.extend(load_lot(broken))
     load_entries.broken = broken
     load_entries.parsed = parsed
     return entries
@@ -269,7 +280,8 @@ SPEC_UPDATED = re.compile(r"\s·\supdated\s(\d{4}-\d{2}-\d{2})\s·\s")
 
 
 def load_specs(broken: list[dict]) -> list[dict]:
-    """Index the spec corpus from ~/dev/specs/llms.txt.
+    """Index the spec corpus from ~/dev/specs/llms.txt, as the checkout and
+    as origin/main have it.
 
     The catalogs answer "what went wrong before". Nothing answered "what does
     this product do" or "what did we already decide about X": on 2026-09-21
@@ -289,14 +301,51 @@ def load_specs(broken: list[dict]) -> list[dict]:
     counts them separately for the same reason it separates rules: folding them
     in would move a tracked percentage without anything becoming less reachable.
     """
-    if not SPECS_INDEX.exists():
-        return []
+    local = None
+    if SPECS_INDEX.exists():
+        try:
+            local = SPECS_INDEX.read_text()
+        except Exception as exc:
+            first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+            broken.append({"catalog": "SPEC", "path": str(SPECS_INDEX), "error": first})
+    here = _index_lines(local or "", str(SPECS_INDEX.parent) + "/")
+    # The file exists and its shape is gated, so zero parsed lines means the
+    # generator changed its format -- not that there are no specs. Staying
+    # silent there would read exactly like an empty spec corpus.
+    if local is not None and not here:
+        broken.append({"catalog": "SPEC", "path": str(SPECS_INDEX),
+                       "error": "no spec lines matched the expected format"})
+    # The checkout often sits on a branch cut before main gained a spec: on
+    # 2026-09-29 a spec written that day was on main and could not be found.
+    # One line per spec, so where both list it the later update wins and a tie
+    # goes to the working tree, which may hold what is not committed yet.
+    out = {e["id"]: e for e in _index_lines(_index_on_main(), SPECS_REF + ":")}
+    for e in here:
+        old = out.get(e["id"])
+        if old is None or e["raw"]["updated"] >= old["raw"]["updated"]:
+            out[e["id"]] = e
+    return list(out.values())
+
+
+def _index_on_main() -> str:
+    """The index as origin/main has it, or nothing. Read-only and never
+    fetches, as _specs_on_main: a folder outside git, or a repo that has no
+    origin/main, is read from disk alone."""
+    repo = SPECS_INDEX.parent
+    if not (repo / ".git").exists():
+        return ""
+    import subprocess
     try:
-        text = SPECS_INDEX.read_text()
-    except Exception as exc:
-        first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
-        broken.append({"catalog": "SPEC", "path": str(SPECS_INDEX), "error": first})
-        return []
+        p = subprocess.run(["git", "-C", str(repo), "show", f"{SPECS_REF}:{SPECS_INDEX.name}"],
+                           capture_output=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return p.stdout.decode("utf-8", "replace") if p.returncode == 0 else ""
+
+
+def _index_lines(text: str, root: str) -> list[dict]:
+    """One entry per spec line of an index. root is put before slug/spec.md:
+    a folder for the working tree, "origin/main:" for the copy on main."""
     out, section = [], ""
     for line in text.splitlines():
         if line.startswith("## "):
@@ -335,20 +384,270 @@ def load_specs(broken: list[dict]) -> list[dict]:
             "raw": {"id": slug, "title": title, "summary": tldr,
                     "spec_status": status, "doc_type": doc_type,
                     "updated": updated, "section": section,
-                    "spec_path": str(SPECS_INDEX.parent / slug / "spec.md")},
+                    "spec_path": f"{root}{slug}/spec.md"},
             # The slug is indexed twice, once literally and once with its
             # hyphens opened out, because "the clarification form spec" and
             # `clarification-form-keyboard-ux` should both find it by name.
             "text": "\n".join([slug, slug.replace("-", " "), title, tldr,
                                doc_type, status, section]),
         })
-    # The file exists and its shape is gated, so zero parsed lines means the
-    # generator changed its format -- not that there are no specs. Staying
-    # silent there would read exactly like an empty spec corpus.
-    if not out:
-        broken.append({"catalog": "SPEC", "path": str(SPECS_INDEX),
-                       "error": "no spec lines matched the expected format"})
     return out
+
+
+# Decisions are written two ways in the corpus. A body section (park.py's
+# handoff check reads markdown with these same patterns):
+#   ## Decision log
+#   - **2026-09-24 — Title.** body, which may continue on indented lines
+# and a front-matter list: decision_log: [{date, what, why, alternatives, source}].
+DECISION_SECTION = re.compile(r"^ {0,3}#{1,6}\s+(?:decision log|decisions)\b", re.I | re.M)
+MD_HEADING = re.compile(r"^ {0,3}(#{1,6})\s+(.*)$")
+MD_FENCE = re.compile(r"^\s*(```|~~~)")
+MD_ITEM = re.compile(r"^(?:[-*+]|\d+[.)])\s+")
+MD_ROW = re.compile(r"^\s*\|.*\|\s*$")
+MD_RULE = re.compile(r"^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$")
+ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+LEAD_BOLD = re.compile(r"^\*\*(.+?)\*\*[:.]?\s*")
+LEAD_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})\S*[\s·—–:,-]*")
+# "2026-05-22 · BRAINSTORM · DECIDED · Title." -- 619 bullets were written
+# this way on 2026-09-29. The stage is kept, just not as part of the title.
+LEAD_STAGE = re.compile(r"^((?:[A-Z][A-Z0-9-]+\s*·\s*)+)")
+FRONT_MATTER = re.compile(r"\A---[ \t]*\n(.*?)\n---[ \t]*(?:\n|\Z)", re.S)
+FRONT_LOG = re.compile(r"^decision_log:.*?(?=^\S|\Z)", re.M | re.S)
+
+
+def _decision_items(text: str) -> list[dict]:
+    """The bullets, numbered items and table rows under every Decision log or
+    Decisions heading, each with the line it starts on. A bullet's indented
+    lines are part of it; the section ends at a heading of its own level or
+    higher; a dated sub-heading inside it dates the undated bullets below."""
+    out, level, fenced, cur, sub_date = [], None, False, None, None
+    for n, line in enumerate(text.splitlines(), 1):
+        if MD_FENCE.match(line):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        h = MD_HEADING.match(line)
+        if h:
+            cur, depth = None, len(h.group(1))
+            if level is not None and depth <= level:
+                level = None
+            if level is None:
+                if DECISION_SECTION.match(line):
+                    level, sub_date = depth, None
+            else:
+                d = ISO_DAY.search(h.group(2))
+                sub_date = d.group(0) if d else None
+            continue
+        if level is None:
+            continue
+        if MD_ROW.match(line):
+            cur = None
+            if MD_RULE.match(line):
+                if out and out[-1]["row"] and out[-1]["line"] == n - 1:
+                    out.pop()                    # the row above a rule is a header
+                continue
+            out.append({"line": n, "row": True, "text": line, "sub_date": sub_date})
+        elif MD_ITEM.match(line):
+            cur = {"line": n, "row": False, "text": MD_ITEM.sub("", line, count=1),
+                   "sub_date": sub_date}
+            out.append(cur)
+        elif cur is not None and line[:1] in (" ", "\t") and line.strip():
+            cur["text"] += " " + line.strip()
+        elif line.strip():
+            cur = None                           # a plain paragraph ends the bullet
+    return out
+
+
+def _parse_decision(item: dict) -> dict:
+    """Title, date and stage out of one item. The corpus convention is a bold
+    lead that starts with the date; an item without one keeps its first
+    sentence as the title. No date anywhere means the date is unknown."""
+    if item["row"]:
+        cells = [c.strip().strip("*").strip() for c in item["text"].strip().strip("|").split("|")]
+        date = next((c[:10] for c in cells if ISO_DAY.match(c)), None)
+        title = next((c for c in cells if c and not ISO_DAY.match(c)), "")
+        return {"line": item["line"], "date": date or item["sub_date"], "title": title,
+                "stage": "", "body": " · ".join(c for c in cells if c and c != title)}
+    text = " ".join(item["text"].split())
+    date, stages = None, []
+
+    def peel(head: str) -> str:
+        nonlocal date
+        d = LEAD_DATE.match(head)
+        if d and not date:
+            date, head = d.group(1), head[d.end():]
+        st = LEAD_STAGE.match(head)
+        if st:
+            stages.append(st.group(1).strip(" ·"))
+            head = head[st.end():]
+        return head
+
+    # The date and stage sit inside the bold lead or just before it; both
+    # shapes are in the corpus, so peel them from whichever comes first.
+    m = LEAD_BOLD.match(text)
+    if m:
+        lead, body = peel(m.group(1).strip()), text[m.end():]
+    else:
+        body = peel(text)
+        m = LEAD_BOLD.match(body)
+        lead, body = (peel(m.group(1).strip()), body[m.end():]) if m else ("", body)
+    title = lead.strip()
+    if not title:
+        first, sep, rest = body.partition(". ")
+        title, body = (first + "." if sep else first), rest
+    return {"line": item["line"], "date": date or item["sub_date"], "title": title,
+            "stage": " · ".join(stages), "body": body.strip()}
+
+
+def _front_matter_decisions(text: str) -> list[dict]:
+    """decision_log: entries from the front matter, each with its line.
+
+    Only the decision_log block is parsed, with the C parser when PyYAML has
+    one: whole front matters through the pure-Python parser cost ~100 ms for
+    sixteen specs, and this runs on every query.
+    """
+    fm = FRONT_MATTER.match(text)
+    block = FRONT_LOG.search(fm.group(1)) if fm else None
+    if not block:
+        return []
+    import yaml            # deferred, as every loader here does
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)(block.group(0))
+    try:
+        node = loader.get_single_node()
+        data = loader.construct_document(node) if node is not None else None
+    finally:
+        loader.dispose()
+    entries = data.get("decision_log") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        return []
+    seq = next((v for k, v in node.value if k.value == "decision_log"), None)
+    base = 2 + fm.group(1).count("\n", 0, block.start())    # line 1 is the opening ---
+    out = []
+    for i, e in enumerate(entries):
+        if not isinstance(e, dict):
+            continue
+        alts = e.get("alternatives")
+        alts = "; ".join(map(str, alts)) if isinstance(alts, list) else str(alts or "")
+        body = " ".join(x for x in (str(e.get("why") or ""),
+                                    f"Alternatives: {alts}" if alts else "",
+                                    f"Source: {e['source']}" if e.get("source") else "") if x)
+        day = ISO_DAY.match(str(e.get("date") or ""))
+        at = seq.value[i].start_mark.line if seq is not None and i < len(seq.value) else 0
+        out.append({"line": base + at, "stage": "",
+                    "date": day.group(0) if day else None,
+                    "title": " ".join(str(e.get("what") or e.get("decision") or "").split())
+                             or body[:160], "body": body})
+    return out
+
+
+def _specs_on_main() -> dict[str, str]:
+    """Every */spec.md as origin/main has it, read by one git process.
+
+    The specs checkout often sits on a long-lived branch whose working tree
+    lacks files main has; a sweep that read only the working tree once missed
+    27 of 30 handoffs that way. Read-only: this never fetches, so it sees
+    origin/main as of the last fetch, and a folder that is not the root of a
+    git repo, or has no origin/main, is simply read from disk.
+    """
+    if not (SPECS_DIR / ".git").exists():
+        return {}
+    import io
+    import subprocess
+    import tarfile
+    try:
+        p = subprocess.run(["git", "-C", str(SPECS_DIR), "archive", "--format=tar",
+                            SPECS_REF, "--", ":(glob)*/spec.md"],
+                           capture_output=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if p.returncode != 0:
+        return {}
+    out = {}
+    with tarfile.open(fileobj=io.BytesIO(p.stdout)) as tar:
+        for m in tar:
+            if m.isfile() and m.name.count("/") == 1:
+                out[m.name.split("/")[0]] = tar.extractfile(m).read().decode("utf-8", "replace")
+    return out
+
+
+def load_decisions(broken: list[dict]) -> list[dict]:
+    """Index every decision in every spec's decision log, one entry each.
+
+    load_specs indexes one line per spec, by design, so a decision written
+    inside a spec could not be found by its own words. On 2026-09-29 the
+    owner's phrase "artificially constrain on desktop and tablet" sat in a
+    dated decision in responsive-artifacts and a query for it missed the
+    spec; decisions "felt unrecorded". Only the logs are read into the index,
+    never the rest of a spec body.
+
+    Specs are read from the working tree AND from origin/main, and the union
+    is kept: a decision is the same decision when its spec, date and title
+    match, whichever copy it came from. load_decisions.formats counts how
+    many specs wrote decisions each way, for --stats.
+    """
+    load_decisions.formats = {"section": 0, "front_matter": 0}
+    if not SPECS_DIR.is_dir():
+        return []
+    local = {}
+    for f in sorted(SPECS_DIR.glob("*/spec.md")):
+        try:
+            local[f.parent.name] = f.read_text(errors="replace")
+        except OSError as exc:
+            broken.append({"catalog": "DECISION", "path": str(f), "error": why_broken(exc)})
+    copies = [(slug, text, str(SPECS_DIR / slug / "spec.md")) for slug, text in local.items()]
+    # An identical copy on main adds nothing, so it is not parsed twice.
+    copies += [(slug, text, f"{SPECS_REF}:{slug}/spec.md")
+               for slug, text in sorted(_specs_on_main().items()) if local.get(slug) != text]
+    seen, per_day, out = set(), Counter(), []
+    used = {"section": set(), "front_matter": set()}
+    for slug, text, where in copies:
+        found = []
+        try:
+            fm = _front_matter_decisions(text)
+            used["front_matter"].update([slug] if fm else [])
+            found += fm
+        except Exception as exc:
+            broken.append({"catalog": "DECISION", "path": where,
+                           "error": f"front matter: {why_broken(exc)}"})
+        try:
+            if DECISION_SECTION.search(text):
+                sec = [_parse_decision(i) for i in _decision_items(text)]
+                used["section"].update([slug] if sec else [])
+                found += sec
+        except Exception as exc:
+            broken.append({"catalog": "DECISION", "path": where, "error": why_broken(exc)})
+        for d in found:
+            ident = (slug, d["date"], d["title"].lower())
+            if not d["title"] or ident in seen:
+                continue
+            seen.add(ident)
+            day = d["date"] or "unknown"
+            per_day[(slug, day)] += 1
+            did = f"{slug}:{day}:{per_day[(slug, day)]}"
+            out.append({
+                "key": f"DECISION:{did}", "id": did, "catalog": "DECISION",
+                "recurrences": 0, "probe_when": [], "is_decision": True,
+                "raw": {"id": did, "spec": slug, "date": d["date"], "title": d["title"],
+                        "stage": d["stage"], "summary": d["body"] or d["title"],
+                        "path": where, "line": d["line"], "specs_dir": str(SPECS_DIR)},
+                "text": "\n".join([slug.replace("-", " "), d["title"], d["body"]]),
+            })
+    load_decisions.formats = {k: len(v) for k, v in used.items()}
+    return out
+
+
+def decision_lines(r: dict, full: bool = False) -> list[str]:
+    """Which spec decided it, when, what, and where to read it."""
+    out = [f"  {r['spec']} · {r.get('date') or 'date unknown'}"
+           + (f" · {r['stage']}" if r.get("stage") else ""), f"  {r['title']}"]
+    body = " ".join(str(r.get("summary") or "").split())
+    if body and body != r["title"]:
+        out.append("  " + (body if full else body[:BODY_CAP] + ("…" if len(body) > BODY_CAP else "")))
+    where = f"  {r['path']}:{r['line']}"
+    if str(r["path"]).startswith(SPECS_REF + ":"):
+        where += f"  (not in this checkout; git -C {r['specs_dir']} show {r['path']})"
+    return out + [where]
 
 
 def load_hub(broken: list[dict]) -> list[dict]:
@@ -545,6 +844,142 @@ def load_orphans(broken: list[dict]) -> list[dict]:
     return out
 
 
+# The parking lot's contract, shared with park.py, which writes it. Kept here
+# because recall reads the lot and park.py already imports recall; one
+# direction of import, one copy of the rules.
+LOT_OPEN = ("parked", "in-progress")
+LOT_TIER_LABEL = {1: "do next", 2: "soon", 3: "someday"}
+# A "do next" list with twenty items in it is a list nobody reads. See park.py.
+LOT_TIER1_CAP = 5
+
+
+def read_lot(broken: list[dict]) -> list[dict]:
+    """Every item in the parking lot, whatever its status.
+
+    One file per item so parallel sessions never merge a shared file. The file
+    name is the item's identity, because it is what park.py writes to. An
+    unreadable file is reported and skipped; it must not cost the rest.
+    """
+    if not LOT_DIR.exists():
+        return []
+    items = []
+    for f in sorted(LOT_DIR.glob("*.json")):
+        try:
+            item = json.loads(f.read_text())
+            if not isinstance(item, dict) or not str(item.get("title") or "").strip():
+                raise ValueError("not a parked item: it has no title")
+        except Exception as exc:
+            broken.append({"catalog": "LOT", "path": str(f), "error": why_broken(exc)})
+            continue
+        item["id"] = f.stem
+        items.append(item)
+    return items
+
+
+def load_lot(broken: list[dict]) -> list[dict]:
+    """Index the open items in the parking lot -- work deferred, not lessons.
+
+    "Do this later" used to be a line in a handoff, and nothing ever showed a
+    handoff line again. Indexed here, a question that touches the work finds
+    it. Done and killed items stay on disk for their history and leave the
+    index, so a finished plan never answers a question as if it were pending.
+    """
+    out = []
+    for i in read_lot(broken):
+        if str(i.get("status") or "parked") not in LOT_OPEN:
+            continue
+        src = i.get("source") if isinstance(i.get("source"), dict) else {}
+        out.append({
+            "key": f"LOT:{i['id']}", "id": i["id"], "catalog": "LOT",
+            "recurrences": 0, "probe_when": [], "is_lot": True, "raw": i,
+            "text": "\n".join(str(x) for x in (
+                i["id"].replace("-", " "), i.get("title"), i.get("body"),
+                i.get("first_move"), i.get("theme"), src.get("quote"),
+                src.get("ref")) if x),
+        })
+    return out
+
+
+def lot_tier(item: dict) -> int | None:
+    t = item.get("tier")
+    # bool first: True == 1, so a hand-edited "tier": true would read as tier 1.
+    return t if not isinstance(t, bool) and t in (1, 2, 3) else None
+
+
+def lot_tier1_open(items: list[dict]) -> int:
+    return sum(1 for i in items if lot_tier(i) == 1
+               and str(i.get("status") or "parked") in LOT_OPEN)
+
+
+def lot_order(items: list[dict]) -> list[dict]:
+    """Tier 1, 2, 3, then the unsorted inbox; the owner's own asks first
+    within each; then the most recently touched."""
+    items = sorted(items, key=lambda i: str(i.get("last_touched") or ""), reverse=True)
+    return sorted(items, key=lambda i: (lot_tier(i) or 4, not i.get("owner_said")))
+
+
+def lot_table(items: list[dict], tier1_open: int | None = None) -> str:
+    """The list a person scans: tier, id, title, theme, age in days.
+
+    tier1_open is counted by the caller over the whole store, because a
+    filtered list cannot tell how full tier 1 is.
+    """
+    if not items:
+        return "  nothing parked"
+    today = datetime.now(timezone.utc).date()
+    rows = []
+    for i in items:
+        try:
+            age = f"{(today - datetime.strptime(str(i.get('created'))[:10], '%Y-%m-%d').date()).days}d"
+        except ValueError:
+            age = "?"
+        title = " ".join(str(i.get("title") or "").split())
+        rows.append((f"{lot_tier(i) or 'inbox'}{'*' if i.get('owner_said') else ''}", i["id"],
+                     title if len(title) <= 50 else title[:49] + "…",
+                     str(i.get("theme") or "other"), age))
+    head = ("tier", "id", "title", "theme", "age")
+    w = [max(len(r[c]) for r in rows + [head]) for c in range(4)]
+    lines = ["  " + "  ".join(r[c].ljust(w[c]) for c in range(4)) + "  " + r[4]
+             for r in [head] + rows]
+    lines.append(f"\n  {len(items)} listed"
+                 + (f" · tier 1 holds {tier1_open} of {LOT_TIER1_CAP}" if tier1_open is not None else "")
+                 + (" · * the owner asked for it" if any(i.get("owner_said") for i in items) else ""))
+    return "\n".join(lines)
+
+
+def lot_lines(r: dict, full: bool = False) -> list[str]:
+    """A parked item is a plan: what it is, how urgent, where it came from,
+    and the first thing to do. It has no fix, so it does not print one."""
+    out = [f"  {' '.join(str(r.get('title') or '').split())}"]
+    body = " ".join(str(r.get("body") or "").split())
+    if body:
+        out.append("  " + (body if full else body[:BODY_CAP] + ("…" if len(body) > BODY_CAP else "")))
+    t = lot_tier(r)
+    out.append(f"  {f'tier {t} · {LOT_TIER_LABEL[t]}' if t else 'not sorted'} · "
+               f"{r.get('status') or 'parked'} · {r.get('theme') or 'other'}"
+               + (" · the owner asked for it" if r.get("owner_said") else ""))
+    src = r.get("source") if isinstance(r.get("source"), dict) else {}
+    kind, ref = src.get("kind"), src.get("ref")
+    where = " · ".join(x for x in (
+        f"session {src['session_id']}" if src.get("session_id") else "",
+        f"{kind} {ref}" if ref else (kind if kind and kind != "session" else "")) if x)
+    if where or src.get("quote"):
+        out.append(f"  from: {where or '?'}" + (f' — "{src["quote"]}"' if src.get("quote") else ""))
+    if r.get("first_move"):
+        out.append(f"  FIRST MOVE: {r['first_move']}")
+    if full:
+        links = r.get("links") if isinstance(r.get("links"), dict) else {}
+        for label, v in (("linear", links.get("linear")), ("prs", ", ".join(links.get("prs") or [])),
+                         ("spec", links.get("spec")),
+                         ("revisit when", "; ".join(r.get("revisit_when") or []))):
+            if v:
+                out.append(f"  {label}: {v}")
+        out.append(f"  created {str(r.get('created'))[:10]} · touched {str(r.get('last_touched'))[:10]}"
+                   f" · {len(r.get('history') or [])} change(s)")
+        out.append(f"  {LOT_DIR / (str(r.get('id')) + '.json')}")
+    return out
+
+
 def load_connectors(broken: list[dict]) -> list[dict]:
     """Index the connector pointers under $RECALL_HOME/connectors/*.jsonl.
 
@@ -734,6 +1169,18 @@ def _push_channel():
 _push_channel.mod = None
 
 
+# Sources that are pointers or plans rather than lessons. None of them reaches
+# the push channel, so an injection-coverage number or a cut-off audit that
+# counted them would move without anything getting harder to reach. One list,
+# so the next source is excluded everywhere at once instead of at four sites.
+NOT_LESSONS = ("is_spec", "is_hub", "is_connector", "is_receipt", "is_orphan", "is_lot",
+               "is_decision")
+
+
+def is_pointer(e: dict) -> bool:
+    return any(e.get(f) for f in NOT_LESSONS)
+
+
 def show(e: dict, score: float | None = None, hits: list[str] | None = None,
          full: bool = False, judged: float | None = None) -> None:
     r = e["raw"]
@@ -747,18 +1194,26 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None,
     if judged is not None:
         line = f"  judged {judged:.2f}" + line
     print(f"\n{head}\n{tag}" + line)
+    if e.get("is_lot"):
+        print("\n".join(lot_lines(r, full)))
+        return
+    if e.get("is_decision"):
+        print("\n".join(decision_lines(r, full)))
+        return
     body = _first(r, DISPLAY_BODY) or _longest_unknown(r) or ""
     body = " ".join(str(body).split())
     print("  " + (body if full else body[:BODY_CAP] + ("…" if len(body) > BODY_CAP else "")))
-    if (e.get("is_spec") or e.get("is_hub") or e.get("is_connector")
-            or e.get("is_receipt") or e.get("is_orphan")):
+    if is_pointer(e):
         # A spec has no fix. Its state and its path are what a reader needs
         # next, and the path is the whole point of retrieving it.
         meta = " · ".join(x for x in (r.get("doc_type"), r.get("spec_status"),
                                       r.get("updated")) if x)
         if meta:
             print(f"  {meta}")
-        print(f"  {r.get('spec_path', '')}")
+        where = str(r.get("spec_path", ""))
+        if e.get("is_spec") and where.startswith(SPECS_REF + ":"):
+            where += f"  (read from {SPECS_REF}; git -C {SPECS_INDEX.parent} show {where})"
+        print(f"  {where}")
     fix = _first(r, DISPLAY_FIX)
     if fix:
         fix = " ".join(str(fix).split())
@@ -975,9 +1430,7 @@ def truncated_fixes(entries: list[dict]) -> list[dict]:
         # fires, uncut -- so measuring them against push's cap counts a
         # truncation that cannot happen. Left in and the number moves by 9.
         # Specs never reach it either, and for the same reason.
-        if e.get("is_rule") or e.get("is_spec") or e.get("is_hub") \
-                or e.get("is_connector") or e.get("is_receipt") \
-                or e.get("is_orphan"):
+        if e.get("is_rule") or is_pointer(e):
             continue
         raw = e["raw"]
         parts = [("what to do", push.remedy(raw)), ("body", push.summarize(raw))]
@@ -1112,25 +1565,37 @@ def main() -> int:
     ap.add_argument("--no-abstain", action="store_true",
                     help="with --rerank, show the results even when none beat the control")
     ap.add_argument("--specs", action="store_true",
-                    help="search only the spec corpus, not the failure catalogs")
+                    help="search only the spec corpus and the decisions in it")
     ap.add_argument("--hub", action="store_true",
                     help="search only the published hub (specs, plans, playbooks, prototypes)")
     ap.add_argument("--connectors", action="store_true",
                     help="search only connector pointers (Slack, Gmail, meetings)")
+    ap.add_argument("--lot", action="store_true",
+                    help="the parking lot: list open items, or search only them")
     ap.add_argument("--stats", action="store_true")
     a = ap.parse_args()
 
     entries = load_entries()
     if a.specs:
-        entries = [e for e in entries if e.get("is_spec")]
+        # Asking for specs is asking what they decided, too.
+        entries = [e for e in entries if e.get("is_spec") or e.get("is_decision")]
     if a.hub:
         entries = [e for e in entries if e.get("is_hub")]
     if a.connectors:
         entries = [e for e in entries if e.get("is_connector")]
+    if a.lot:
+        entries = [e for e in entries if e.get("is_lot")]
     for b in getattr(load_entries, "broken", []):
         sys.stderr.write(
             f"recall: {b['catalog']} catalog did not parse and is EXCLUDED from these "
             f"results — {b['path']}: {b['error']}\n")
+    # Before the empty-corpus guard: the lot does not depend on the catalogs,
+    # and an empty lot is a clean answer, not a broken install.
+    if a.lot and not a.query and not a.id and not a.stats:
+        items = lot_order([e["raw"] for e in entries])
+        print(json.dumps(items, indent=2) if a.json
+              else lot_table(items, lot_tier1_open(items)))
+        return 0
     # A freshly installed corpus is EMPTY, and install.sh tells the user to run
     # `recall.py --stats` first. Treating zero entries as "no readable catalogs"
     # made a correct empty state indistinguishable from a broken install, and
@@ -1144,10 +1609,7 @@ def main() -> int:
         # Rules are not in the injection index by design -- they arrive when
         # their skill fires -- so scoring them here would move a tracked
         # percentage without anything becoming less reachable.
-        cat = [e for e in entries if not e.get("is_rule")
-               and not e.get("is_spec") and not e.get("is_hub")
-               and not e.get("is_connector") and not e.get("is_receipt")
-               and not e.get("is_orphan")]
+        cat = [e for e in entries if not e.get("is_rule") and not is_pointer(e)]
         rules = [e for e in entries if e.get("is_rule")]
         specs = [e for e in entries if e.get("is_spec")]
         unreachable = [e for e in cat if e["key"] not in idx]
@@ -1157,6 +1619,8 @@ def main() -> int:
             "catalog_entries": len(cat),
             "rules_entries": len(rules),
             "spec_entries": len(specs),
+            "decision_entries": sum(1 for e in entries if e.get("is_decision")),
+            "decision_formats": getattr(load_decisions, "formats", {}),
             "hub_entries": sum(1 for e in entries if e.get("is_hub")),
             "connector_entries": sum(1 for e in entries if e.get("is_connector")),
             "connector_sources": sorted({e["catalog"] for e in entries
@@ -1266,10 +1730,7 @@ def main() -> int:
         # Specs are unreachable by injection by design -- no probe_when, and
         # none is wanted -- so listing them here would bury the entries this
         # mode exists to surface under a growing pile working as intended.
-        sel = [e for e in entries
-               if not e.get("is_spec") and not e.get("is_hub")
-               and not e.get("is_connector") and not e.get("is_receipt")
-               and not e.get("is_orphan") and e["key"] not in idx][:a.limit]
+        sel = [e for e in entries if not is_pointer(e) and e["key"] not in idx][:a.limit]
     elif a.stubs:
         # An id with no body AND no fix is indistinguishable from a covered
         # lesson in every count, and cannot be acted on by anyone. The id still
@@ -1281,7 +1742,10 @@ def main() -> int:
         FIX = ("fix_pattern", "fix", "affected_pattern", "why")
         def _empty(e, keys):
             return not any(str(e["raw"].get(k) or "").strip() for k in keys)
-        sel = [e for e in entries if _empty(e, BODY) and _empty(e, FIX)][:a.limit]
+        # A parked item is a plan with a title and a first move, never a
+        # lesson, so it is not a stub for lacking one.
+        sel = [e for e in entries if not e.get("is_lot")
+               and _empty(e, BODY) and _empty(e, FIX)][:a.limit]
     elif a.query:
         q = " ".join(a.query)
         ranked = bm25(entries, q)
