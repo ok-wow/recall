@@ -1,20 +1,20 @@
-# Recall
+# Recall by okWOW
 
-**Your AI coding agent forgets everything the moment a session ends. Recall fixes that.**
+**The memory your AI agent was missing.**
 
-You already explained this once. The setting that ate a day last month. The reason
-you stopped doing it the other way. The thing that finally worked at 1am. Your agent
-worked it out with you, you moved on, and when the conversation closed it was gone.
+Recall is a small add-on for **Claude Code** and **Codex**. It remembers what your
+work taught: what worked, what you decided, and what you put off. It runs on your
+own machine, in the terminal or the desktop app, and it starts empty.
 
-So next week you explain it again.
+It is for anyone who works with a coding agent every day and is tired of explaining
+the same things again. Founders, designers, operators, engineers. If you have ever
+typed one of these, this is for you:
 
-Recall catches what a session actually taught, keeps it on your own machine, and
-puts it back in front of your agent the next time it matters. Every lesson that
-lands is a dead end your agent does not walk twice, and an explanation you do not
-give again. It works with **Claude Code** and **Codex**, in the terminal and in the
-desktop app.
+- "No, do it this way." For the second time.
+- "We just solved this yesterday."
+- "Why the fuck can you not remember what we talked about?"
 
-## Add Recall to Claude Code or Codex
+## Get it
 
 **Claude Code.** Paste this into a session, in the terminal or in the desktop app:
 
@@ -37,35 +37,57 @@ claude plugin install recall@ok-wow
 git clone https://github.com/ok-wow/recall.git ~/recall && cd ~/recall && ./install.sh --host codex
 ```
 
-Start a new session and it is on. The repo is private to our team for now, so
-[getting access](#getting-access) comes first: two commands, once.
+Start a new session and it is on.
 
 ---
 
-## What you get
+## The problem
+
+Your agent is sharp for one conversation. Then the conversation ends and it is gone.
+
+- The export only works if you set the date range first. You found that out in
+  March, the hard way.
+- This client wants a call, never an email. Your agent drafted the email anyway.
+- The board deck lives in the shared folder, named by month. It made a new folder.
+- The build fails unless one variable is set. That cost you an afternoon, once.
+- You tried the other approach last quarter. It was worse. You half remember why.
+
+Each of those was learned once, at real cost. Each one you will explain again,
+because the agent that learned it is not the agent you are talking to now.
+
+## The solution
 
 **It learns.** When a session ends, Recall reads it and writes down what it taught.
-Not a summary of what happened. The thing that finally worked, the decision and what
-you turned down to make it, the approach that looked right and wasn't.
+Not a summary of what happened. The thing that finally worked, the decision and
+what you turned down, the approach that looked right and wasn't.
 
-**It speaks up.** The next time that lesson matters, your agent already has it. Some
-lessons carry something exact, like a file name or an error message. When that exact
-thing shows up again, Recall says so on its own. You do not have to remember to ask.
+**It brings it back.** The next time that lesson matters, your agent already has
+it. Some lessons carry something exact, like a client's name or an error message,
+and when that shows up again Recall speaks up on its own. The rest you ask for in
+plain words.
 
-**You can ask.** The rest are judgment calls. Why you dropped that approach. How this
-client likes to be handled. Ask in plain words and it finds them anyway.
+**It adds up.** Every session starts further along than the last one. Every lesson
+that lands is a dead end your agent does not walk twice, and an explanation you do
+not give again.
 
-**It finds what you decided.** If you keep decision docs, Recall reads the decision
-log inside each one, so "what did we decide about the tables" gets the decision, not
-the document it is buried in. In the memory Recall grew up in, that is 1,515
-decisions across 166 docs that a search used to miss.
+## Features
 
-**It remembers what you put off.** Every session ends with a few things you decided
-not to do yet. Recall keeps a parking lot for them, with a "do next" list that holds
-five items and refuses a sixth. More on that [below](#work-you-said-you-would-do-later).
-
-**It adds up.** Every session starts further along than the last one. Your work stops
-resetting.
+- **Speaks up on its own.** A matching lesson appears in the conversation the moment
+  it is relevant, without being asked.
+- **Answers in plain words.** "How does this client like to be handled" finds the
+  answer, even when nothing exact matches.
+- **Finds what you decided.** If you keep decision notes, it reads the decision
+  inside each one, so "what did we decide about pricing" gets the decision, not the
+  document.
+- **Remembers what you put off.** A parking lot for later, with a "do next" list
+  that holds five items and refuses a sixth.
+- **Keeps an honest score.** It tells you when a lesson was shown and did not
+  change anything, so you know which ones to rewrite.
+- **Says when it has nothing.** No closest-match guesses dressed up as answers.
+- **Stays on your machine.** No account, no cloud, no dashboard. Your memory is a
+  folder on your own disk, and it never leaves.
+- **Backs itself up, privately.** One command makes that folder a private repo
+  under your own account.
 
 ## It stays on your machine
 
@@ -167,22 +189,6 @@ do-next list where everything is urgent is a list you stop reading.
 **Parking the same thing twice is caught.** An item that says what an open one already
 says is refused, and you are shown the open one. Ten sessions noticing the same problem
 should update one item, not leave ten.
-
-## Getting access
-
-The repo is private to the okWOW team for now, so your GitHub account needs access to
-it. Ask a teammate to add you, then sign in to GitHub once from a terminal and let git
-use that sign-in:
-
-```bash
-gh auth login
-```
-
-```bash
-gh auth setup-git
-```
-
-If you do not have `gh`, install it from [cli.github.com](https://cli.github.com/).
 
 ## Install, in detail
 
