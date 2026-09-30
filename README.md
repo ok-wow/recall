@@ -14,13 +14,31 @@ lands is a dead end your agent does not walk twice, and an explanation you do no
 give again. It works with **Claude Code** and **Codex**, in the terminal and in the
 desktop app.
 
-Paste this into a Claude Code session and you are done:
+## Add Recall to Claude Code or Codex
+
+**Claude Code.** Paste this into a session, in the terminal or in the desktop app:
 
 > Install the Recall plugin. Run `claude plugin marketplace add ok-wow/recall`,
 > then `claude plugin install recall@ok-wow`, and show me what each one printed.
 
-(The repo is private to our team for now. [Getting access](#getting-access) is two
-commands, once.)
+Or run the two commands yourself:
+
+```bash
+claude plugin marketplace add ok-wow/recall
+```
+
+```bash
+claude plugin install recall@ok-wow
+```
+
+**Codex.** One line:
+
+```bash
+git clone https://github.com/ok-wow/recall.git ~/recall && cd ~/recall && ./install.sh --host codex
+```
+
+Start a new session and it is on. The repo is private to our team for now, so
+[getting access](#getting-access) comes first: two commands, once.
 
 ---
 
@@ -166,58 +184,31 @@ gh auth setup-git
 
 If you do not have `gh`, install it from [cli.github.com](https://cli.github.com/).
 
-## Install
+## Install, in detail
 
-Pick one. One per machine is enough.
+The commands at the top are all most people need. This is the rest.
 
-### Claude Code, by prompt
+**After a plugin install** there is nothing else to do: the first session makes
+`~/.recall` for you, and the desktop app and the terminal share the same setup.
 
-Open a Claude Code session, in the terminal or in the desktop app, and paste:
-
-> Install the Recall plugin. Run `claude plugin marketplace add ok-wow/recall`,
-> then `claude plugin install recall@ok-wow`, and show me what each one printed.
-
-Start a new session and it is on. The first session makes `~/.recall` for you. The
-desktop app and the terminal share the same setup, so one install covers both.
-
-### Claude Code, by command
-
-```bash
-claude plugin marketplace add ok-wow/recall
-```
-
-```bash
-claude plugin install recall@ok-wow
-```
-
-To get a newer Recall later, then restart the session:
+**To get a newer Recall later**, then restart the session:
 
 ```bash
 claude plugin update recall@ok-wow
 ```
 
-### Codex
-
-```bash
-git clone https://github.com/ok-wow/recall.git ~/recall && cd ~/recall && ./install.sh --host codex
-```
-
-### Claude Code, from a clone
+**Claude Code, from a clone**, if you would rather not use the plugin:
 
 ```bash
 git clone https://github.com/ok-wow/recall.git ~/recall && cd ~/recall && ./install.sh
 ```
 
 The installer prints a plan, asks once, and backs up every file it touches. There is
-an uninstaller and it puts everything back.
+an uninstaller and it puts everything back. Use the plugin or the clone, not both:
+with both, every step runs twice, and Recall tells you so at the start of a session.
 
-Use the plugin or the clone, not both. With both, every step runs twice, and Recall
-tells you so at the start of a session.
-
-### Where it does not run
-
-Cloud and web sessions do not load plugins, so Recall is off there. It runs where your
-own `~/.claude` or `~/.codex` folder is.
+**Where it does not run.** Cloud and web sessions do not load plugins, so Recall is
+off there. It runs where your own `~/.claude` or `~/.codex` folder is.
 
 ## Ask it something
 
