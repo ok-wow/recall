@@ -93,7 +93,9 @@ SPECS_REF = "origin/main"
 # Also an index that already existed and was read by nothing. See load_hub.
 HUB_INDEX = env_path("RECALL_HUB_INDEX", "OKWOW_HUB_INDEX",
                      Path.home() / "dev/briefings/site/_index.json")
-HUB_BASE = os.environ.get("RECALL_HUB_BASE") or "https://internal.okwow.ai"
+# Where the published hub lives, for the links in hub results. Unset means the
+# index's own hrefs are printed as they are.
+HUB_BASE = os.environ.get("RECALL_HUB_BASE") or ""
 # Pointers into Slack, Gmail, meetings -- written by connector_index.py, which
 # refuses anything longer than a gist. See load_connectors.
 RECEIPT_DIR = env_path("RECALL_RECEIPT_DIR", "OKWOW_RECEIPT_DIR",
@@ -700,7 +702,7 @@ def load_hub(broken: list[dict]) -> list[dict]:
                         "spec_status": str(i.get("status") or "").strip(),
                         "doc_type": section,
                         "updated": str(i.get("updatedAt") or "").strip()[:10],
-                        "spec_path": f"{HUB_BASE}/{href.lstrip('/')}" if href else ""},
+                        "spec_path": (f"{HUB_BASE}/{href.lstrip('/')}" if HUB_BASE and href else href or "")},
                 "text": "\n".join([slug, slug.replace("-", " "), title, body,
                                    section, str(i.get("track") or "")]),
             })
