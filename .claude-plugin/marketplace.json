@@ -1,0 +1,13 @@
+{
+  "name": "ok-wow",
+  "description": "okWOW plugins for Claude Code.",
+  "owner": {
+    "name": "ok-wow"
+  },
+  "plugins": [
+    {
+      "name": "recall",
+      "source": "./"
+    }
+  ]
+}

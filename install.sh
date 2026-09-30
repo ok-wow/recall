@@ -47,12 +47,15 @@ if [ -z "$HOST" ]; then
 fi
 case "$HOST" in
   claude) RECALL_HOST_DIR="${RECALL_HOST_DIR:-$HOME/.claude}"
-          SETTINGS="$RECALL_HOST_DIR/settings.json"; DEFAULT_BIN=claude ;;
+          SETTINGS="$RECALL_HOST_DIR/settings.json"; DEFAULT_BIN=claude
+          SKILL_HOME="$RECALL_HOST_DIR/skills" ;;
+  # Codex reads user skills from ~/.agents/skills, not from its own directory.
   codex)  RECALL_HOST_DIR="${RECALL_HOST_DIR:-$HOME/.codex}"
-          SETTINGS="$RECALL_HOST_DIR/hooks.json";    DEFAULT_BIN=codex ;;
+          SETTINGS="$RECALL_HOST_DIR/hooks.json";    DEFAULT_BIN=codex
+          SKILL_HOME="$HOME/.agents/skills" ;;
   *) echo "unknown host: $HOST (expected claude or codex)" >&2; exit 2 ;;
 esac
-SKILL_DEST="${RECALL_SKILL_DEST:-$RECALL_HOST_DIR/skills/compound}"
+SKILL_DEST="${RECALL_SKILL_DEST:-$SKILL_HOME/compound}"
 
 say() { printf '%s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing dependency: $1" >&2; exit 1; }; }
@@ -94,6 +97,12 @@ PY
   if [ -L "$SKILL_DEST" ]; then
     rm -f "$SKILL_DEST"; say "  /compound skill unlinked"
   fi
+  # Earlier installs linked the Codex skill under ~/.codex/skills, where Codex
+  # never looked. Remove that link too, and only when it points at this repo.
+  LEGACY="$RECALL_HOST_DIR/skills/compound"
+  if [ "$HOST" = codex ] && [ -L "$LEGACY" ] && [ "$(readlink "$LEGACY")" = "$REPO_DIR/skills/compound" ]; then
+    rm -f "$LEGACY"; say "  old Codex skill link removed"
+  fi
   if command -v launchctl >/dev/null 2>&1; then
     launchctl bootout "gui/$(id -u)/ai.okwow.recall-drain" 2>/dev/null || true
     rm -f "$HOME/Library/LaunchAgents/ai.okwow.recall-drain.plist"
@@ -103,6 +112,33 @@ PY
   fi
   say "Done. Backup: $SETTINGS.recall-backup-$STAMP"
   exit 0
+fi
+
+# ----------------------------------------------------------- plugin guard --
+# Recall also ships as a Claude Code plugin, and Claude Code runs a settings.json
+# hook AND a plugin's copy of the same hook. Both installs at once would capture
+# and inject everything twice, so refuse before the plan rather than after it.
+if [ "$HOST" = claude ]; then
+  PLUGIN_ID=$(python3 - "$SETTINGS" \
+      "${CLAUDE_CODE_PLUGIN_CACHE_DIR:-$RECALL_HOST_DIR/plugins}/installed_plugins.json" <<'PY'
+import json, sys
+def ids(path, key):
+    try:
+        d = json.load(open(path)).get(key) or {}
+    except Exception:
+        return []
+    # enabledPlugins maps id -> bool; installed_plugins maps id -> [installs]
+    return [k for k, v in d.items() if k.split("@")[0] == "recall" and v is not False]
+found = ids(sys.argv[1], "enabledPlugins") + ids(sys.argv[2], "plugins")
+print(found[0] if found else "")
+PY
+)
+  if [ -n "$PLUGIN_ID" ]; then
+    echo "Recall is already installed as a Claude Code plugin ($PLUGIN_ID)." >&2
+    echo "Installing it here as well would run every hook twice, so nothing was changed." >&2
+    echo "Keep the plugin, or remove it first:  claude plugin uninstall $PLUGIN_ID" >&2
+    exit 1
+  fi
 fi
 
 # --------------------------------------------------------------------- plan --
@@ -122,7 +158,7 @@ say "       SessionEnd        capture a finished session"
 say "       SessionStart      report queue + retrieval health"
 say "       UserPromptSubmit  match your prompt against the corpus"
 say "       PostToolUse       match file edits against the corpus"
-[ "$HOST" = claude ] && say "       PreCompact        note when a context window collapses"
+say "       PreCompact        note when a context window collapses"
 say "  4. install the /compound skill into $SKILL_DEST"
 say "  5. schedule the drain every 15 minutes"
 say ""
@@ -168,13 +204,10 @@ WIRING = [
     ("SessionStart",     f"{repo}/hooks/recall-sessionstart.sh"),
     ("UserPromptSubmit", f"{repo}/hooks/recall-probe-inject.sh"),
     ("PostToolUse",      f"{repo}/hooks/recall-probe-inject.sh"),
+    # Both hosts fire PreCompact with a `trigger` field. This was Claude-only
+    # while Codex had no such event; its hooks docs now list it.
+    ("PreCompact",       f"{repo}/hooks/recall-compaction-witness.py"),
 ]
-# Claude Code only. Codex's event list has no PreCompact, and registering an
-# event a host never fires would look wired and do nothing -- the shape of bug
-# this project exists to catch. On Codex the witness is simply absent and its
-# SessionStart reader stays inert, which is honest.
-if host == "claude":
-    WIRING.append(("PreCompact", f"{repo}/hooks/recall-compaction-witness.py"))
 added = 0
 for event, cmd in WIRING:
     entries = hooks.setdefault(event, [])

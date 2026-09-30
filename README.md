@@ -130,23 +130,119 @@ You can always ask to see the results anyway.
 
 ## Try it
 
-It works with **Claude Code** and **Codex**, and it tells you everything it is
-about to do before it does any of it.
+It works with **Claude Code** and **Codex**, in the terminal and in the desktop
+app. It tells you everything it is about to do before it does any of it.
 
-The repo is private to the okWOW org for now, so the clone needs your GitHub
-account to have access to it.
+The repo is private to the okWOW org for now, so your GitHub account needs
+access to it. Sign in once, then let git use that sign-in:
+
+```bash
+gh auth login
+```
+
+```bash
+gh auth setup-git
+```
+
+Pick one of the ways below. One per machine is enough.
+
+### Claude Code, by command
+
+```bash
+claude plugin marketplace add ok-wow/recall
+```
+
+```bash
+claude plugin install recall@ok-wow
+```
+
+Start a new session and it is on. There is no install step after that: the
+first session makes `~/.recall` and its empty catalogs.
+
+To get a newer Recall later, then restart the session:
+
+```bash
+claude plugin update recall@ok-wow
+```
+
+### Claude Code, by prompt
+
+Paste this into a session, in the terminal or in the desktop app:
+
+> Install the Recall plugin. Run `claude plugin marketplace add ok-wow/recall`,
+> then `claude plugin install recall@ok-wow`, and show me what each one printed.
+
+The desktop app and the terminal read the same `~/.claude` folder, so one
+install covers both.
+
+### Codex
+
+```bash
+git clone https://github.com/ok-wow/recall.git ~/recall && cd ~/recall && ./install.sh --host codex
+```
+
+Codex gets the same five hooks, and the skill is linked where Codex reads
+skills, in `~/.agents/skills`.
+
+### Claude Code, from a clone
 
 ```bash
 git clone https://github.com/ok-wow/recall.git ~/recall && cd ~/recall && ./install.sh
 ```
 
-Then ask your memory something, in plain words:
+The installer prints a plan, asks once, and backs up every file it edits.
+There is an uninstaller and it puts everything back.
+
+Use the plugin or the clone, not both. Each one registers the hooks, so with
+both every hook runs twice. Recall says so at the start of a session and names
+the command that removes the extra copy.
+
+### Where it does not run
+
+Cloud and web sessions do not load plugins, so Recall is off there. It runs
+where your own `~/.claude` or `~/.codex` folder is.
+
+### Ask it something
+
+From a clone, in plain words:
 
 ```bash
 python3 ~/recall/scripts/recall.py "how do we handle a renewal that slipped"
 ```
 
-There is an uninstaller and it puts everything back.
+The plugin keeps its scripts inside its own folder. To run them by hand, keep a
+clone too. A clone changes nothing on your machine until you run `install.sh`.
+
+### A private repo of your own
+
+What Recall stores about you lives in `~/.recall`: the catalogs, the parking
+lot, the record of what was shown. It has no history and no backup, and it does
+not belong in a team repo. This gives it both, in a private repo under your own
+account.
+
+See the plan first. It changes nothing:
+
+```bash
+python3 ~/recall/scripts/personal_repo.py plan
+```
+
+Make the store a git repo and commit it:
+
+```bash
+python3 ~/recall/scripts/personal_repo.py init --apply
+```
+
+Check it at any time:
+
+```bash
+python3 ~/recall/scripts/personal_repo.py status
+```
+
+It never creates a GitHub repo and never pushes. It prints those two commands
+and you run them. Credentials, logs and caches stay out of every commit, and a
+file that looks like a key stops the commit. It refuses a remote that is public
+or that belongs to an organization, because an organization's owners can read
+every repo in it.
 
 ## Work you said you would do later
 
