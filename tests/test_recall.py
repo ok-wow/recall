@@ -293,6 +293,23 @@ def main() -> int:
     check("an overridden log means production is never touched",
           not prod.exists() and not (d / "fake-home" / "surfaced.jsonl").exists())
 
+    # A hook renders from the query's own JSON and does not log its lookups.
+    hlog = d / "hook-surfaced.jsonl"
+    rc, out = run(d, "a follow-up in a handoff nobody rereads", "--json", "-n", "3",
+                  surfaced_log=str(hlog))
+    rows = json.loads(out) if rc == 0 else []
+    check("--json rows carry summary, fix and pointer",
+          bool(rows) and all({"summary", "fix", "pointer"} <= set(r) for r in rows)
+          and rows[0]["summary"], out[:200])
+    os.environ["RECALL_CALLER"] = "hook"
+    try:
+        hlog2 = d / "hook-surfaced-2.jsonl"
+        run(d, "a follow-up in a handoff nobody rereads", "--json", surfaced_log=str(hlog2))
+        check("RECALL_CALLER=hook writes no pull row", not hlog2.exists(),
+              hlog2.read_text()[:200] if hlog2.exists() else "")
+    finally:
+        del os.environ["RECALL_CALLER"]
+
     if fails:
         print(f"\nFAIL {len(fails)}/{ran[0]}")
         for f in fails:
