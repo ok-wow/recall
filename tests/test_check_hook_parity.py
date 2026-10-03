@@ -47,7 +47,7 @@ def main() -> int:
             (live / "a.sh").symlink_to("../skills/_hooks/a.sh")          # already right
             (codex / "a.sh").write_text("#!/bin/sh\necho a.sh v2\n")      # identical copy
             (codex / "b.sh").write_text("#!/bin/sh\necho b.sh v1\n")      # drifted copy
-            (codex / "okwow-compound-userprompt.sh").write_text("derived\n")  # derived: exempt
+            (codex / "okwow-compound-userprompt.sh").write_text("derived\n")  # the old derived copy
             (mirror / "b.sh").write_text("#!/bin/sh\necho b.sh v1\n")     # drifted, in repo
             (codex / "codex-only.sh").write_text("#!/bin/sh\n")           # no tracked twin
 
@@ -57,8 +57,8 @@ def main() -> int:
             check("an identical copy is reported as a copy", found.get(".codex/hooks/a.sh") is True, found)
             check("a drifted copy is reported as drifted", found.get(".codex/hooks/b.sh") is False, found)
             check("a drifted copy in the repo mirror is reported", ".claude/skills/hooks/b.sh" in found, found)
-            check("the derived Codex userprompt hook is exempt",
-                  ".codex/hooks/okwow-compound-userprompt.sh" not in found, found)
+            check("the old derived Codex userprompt copy is reported like any copy",
+                  found.get(".codex/hooks/okwow-compound-userprompt.sh") is False, found)
             check("a hook with no tracked twin is left alone", ".codex/hooks/codex-only.sh" not in found, found)
 
             m.link_all()
@@ -70,12 +70,39 @@ def main() -> int:
             check("a link outside the repo is absolute",
                   os.readlink(codex / "b.sh") == str(tracked / "b.sh"), os.readlink(codex / "b.sh"))
             baks = sorted(p.name for p in codex.iterdir() if ".bak-" in p.name)
-            check("the drifted Codex copy is kept as .bak, the identical one is not",
-                  len(baks) == 1 and baks[0].startswith("b.sh.bak-"), baks)
+            check("drifted Codex copies are kept as .bak, the identical one is not",
+                  sorted(b.split(".bak-")[0] for b in baks)
+                  == ["b.sh", "okwow-compound-userprompt.sh"], baks)
             check("no .bak is written inside the repo (git holds it)",
                   not [p for p in mirror.iterdir() if ".bak-" in p.name])
-            check("the derived hook is untouched", (codex / "okwow-compound-userprompt.sh").read_text() == "derived\n")
+            check("the Codex userprompt hook is now a link to the tracked script",
+                  (codex / "okwow-compound-userprompt.sh").resolve()
+                  == (tracked / "okwow-compound-userprompt.sh").resolve())
             check("no temp link is left behind", not [p for p in codex.iterdir() if ".link-" in p.name])
+
+        # Output parity: one script, served from two places, must print the
+        # Claude text for Claude and that text plus CODEX_DELTA for Codex.
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d)
+            tracked = home / ".claude/skills/_hooks"; tracked.mkdir(parents=True)
+            (home / ".claude/hooks").mkdir(parents=True); (home / ".codex/hooks").mkdir(parents=True)
+            # `cat` echoes the payload, so both hosts must be sent the same session.
+            body = ("echo 'Procedure 1.'\ncat; echo\n"
+                    "printf '4. Write a receipt, or add an immutable version to a receipt.\\n5. Verify each write.\\n'\n"
+                    "echo 'After you verify the write, add the human-facing receipt contract at the end of your reply.'\n"
+                    "printf '\\nHUMAN-FACING RECEIPT CONTRACT\\nokWOW captured <id> in <path>.\\n'\n")
+            good = ("#!/bin/bash\nf() { cat; }\ncase \"${BASH_SOURCE[0]}\" in */.codex/*) f() { sed "
+                    "-e '/^4\\. Write a receipt/d' -e 's/^5\\. Verify/4. Verify/' "
+                    "-e 's/^After you verify.*/Do not write a learning receipt. Do not mention receipts in your reply./' "
+                    "-e '/^HUMAN-FACING/d' -e '/^okWOW captured/d'; } ;; esac\n{\n" + body + "} | f\n")
+            hook = tracked / "okwow-compound-userprompt.sh"
+            hook.write_text(good)
+            (home / ".claude/hooks/okwow-compound-userprompt.sh").symlink_to(hook)
+            (home / ".codex/hooks/okwow-compound-userprompt.sh").symlink_to(hook)
+            m = load(home)
+            check("a host-aware script served from both places passes", m.main() == 0)
+            hook.write_text("#!/bin/bash\n" + body)
+            check("the same text for both hosts is drift", m.main() == 1)
     finally:
         os.environ["HOME"] = real_home
 

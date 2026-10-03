@@ -1476,7 +1476,13 @@ def log_pull(shown: list, mode: str, query: str = "", judged: dict | None = None
 
     Never raises. A retrieval tool that fails because its telemetry failed is
     worse than no telemetry.
+
+    A hook's own lookup (RECALL_CALLER=hook) is not a pull: the hook logs what
+    it actually injects. Logged here, 143k hook lookups read as `session=cli`
+    pulls nobody made (audit 2026-10-03).
     """
+    if os.environ.get("RECALL_CALLER") == "hook":
+        return
     try:
         session = os.environ.get("RECALL_SESSION_ID") or "cli"
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1508,6 +1514,8 @@ def log_abstain(query: str, judged_count: int) -> None:
     existing row changes shape. Without it an abstention is indistinguishable
     from a query nobody ran, and the two have opposite meanings for coverage.
     """
+    if os.environ.get("RECALL_CALLER") == "hook":
+        return
     try:
         SURFACED_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(SURFACED_LOG, "a", encoding="utf-8") as fh:
@@ -1772,8 +1780,15 @@ def main() -> int:
         if a.json:
             rows = []
             for e, s, h in ranked:
+                r = e["raw"]
+                body = " ".join(str(_first(r, DISPLAY_BODY) or "").split())
+                fix = " ".join(str(_first(r, DISPLAY_FIX) or "").split())
+                # Body and fix ride along so a caller renders from this one
+                # call instead of a second `--id` process per hit.
                 row = {"id": e["id"], "catalog": e["catalog"], "score": round(s, 2),
-                       "matched": h, "recurrences": e["recurrences"]}
+                       "matched": h, "recurrences": e["recurrences"],
+                       "summary": body[:BODY_CAP], "fix": fix[:FIX_CAP],
+                       "pointer": is_pointer(e)}
                 if judged and e["key"] in judged:
                     row["jev"] = round(judged[e["key"]], 3)
                 rows.append(row)

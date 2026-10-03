@@ -16,26 +16,24 @@ recorded by this same project, against these same two files.
 
 WHY IT IS NOT JUST `diff`.
 
-The copies are now ALLOWED to differ, in exactly one way: Codex sandboxes writes
-outside its workspace, so it cannot write a learning receipt and must not be told
-to. A plain diff would fail forever on that and get silenced within a week.
+The two hosts are ALLOWED to see different text, in exactly one way: Codex
+sandboxes writes outside its workspace, so it cannot write a learning receipt and
+must not be told to.
 
 So the allowed delta is written here as an executable transform. Apply CODEX_DELTA
-to the Claude copy and you must get the Codex copy byte for byte. Anything else is
-drift. The transform IS the specification: to change what Codex is allowed to
-differ by, you edit this list, which makes the exception reviewable instead of
-invisible.
+to what the hook prints for Claude and you must get what it prints for Codex, byte
+for byte. Anything else is drift. The transform IS the specification: to change
+what Codex is allowed to differ by, you edit this list, which makes the exception
+reviewable instead of invisible.
 
-    check_hook_parity.py                 verify Codex = Claude + delta, and that
-                                         every served hook IS the tracked file
-    check_hook_parity.py --write-codex   DERIVE the Codex hook from the Claude copy
-    check_hook_parity.py --link          replace every served copy with a link
+Since 2026-10-03 there is one script. ~/.codex/hooks/okwow-compound-userprompt.sh
+is a link like every other served hook, and the script applies the delta itself
+when it is served from ~/.codex. The derived copy it replaced was a second file to
+keep in step, and it was the only served hook that was not the tracked one.
 
-The writer is the point of the transform, not a convenience on top of it. Because
-the Codex copy is derivable, it does not need to be stored -- which matters, since
-~/.codex/hooks is not a git repo and that file lives on exactly one machine. It
-refuses rather than half-writes: if any passage CODEX_DELTA rewrites is missing
-from the source, or the result loses the contract body, nothing is written.
+    check_hook_parity.py           verify Codex output = Claude output + delta, and
+                                   that every served hook IS the tracked file
+    check_hook_parity.py --link    replace every served copy with a link
 """
 from __future__ import annotations
 
@@ -74,7 +72,7 @@ def unlinked() -> list[tuple[Path, bool]]:
             continue
         for p in sorted(d.iterdir()):
             src = TRACKED / p.name
-            if (not src.is_file() or p == CODEX or ".bak-" in p.name
+            if (not src.is_file() or ".bak-" in p.name
                     or p.resolve() == src.resolve()):
                 continue
             out.append((p, p.is_file() and p.read_bytes() == src.read_bytes()))
@@ -128,80 +126,36 @@ CODEX_DELTA: list[tuple[str, str, str]] = [
 ]
 
 
-def render_codex(claude: str) -> str | None:
-    """The Codex hook, derived from the Claude one. Returns None if the transform
-    no longer applies -- a silently half-applied contract is worse than none."""
-    out = claude
-    for src, dst, _why in CODEX_DELTA:
-        if src not in out:
-            return None
-        out = out.replace(src, dst, 1)
-    return out
+def served_outputs() -> tuple[str, str]:
+    """What the hook prints on a session's first prompt, served from each host.
 
-
-def write_codex(target: Path) -> int:
-    """Regenerate the Codex hook from the Claude copy plus the declared delta.
-
-    ~/.codex/hooks is not a git repo, so this file is stored nowhere. Deriving it
-    is what makes it recoverable, and it removes the copy that drifts: there is
-    one authored contract and one transform, never two files to keep in step.
+    Same input, a fresh session and an empty once-per-session store for both, and
+    no lot, so the only difference left is the host the script sees.
     """
-    if not CLAUDE.exists():
-        print(f"hook-parity: cannot derive — no source at {CLAUDE}", file=sys.stderr)
-        return 1
-
-    rendered = render_codex(CLAUDE.read_text())
-    if rendered is None:
-        print("hook-parity: the Claude copy no longer contains every passage CODEX_DELTA "
-              "rewrites, so the derived hook would be half-transformed. Refusing to "
-              "write. Update CODEX_DELTA to match the current source.", file=sys.stderr)
-        return 1
-    # A contract that lost its body would still be valid shell, so check the body.
-    if "Procedure 1" not in rendered or len(rendered) < 2000:
-        print(f"hook-parity: derived hook looks wrong ({len(rendered)} bytes). "
-              f"Refusing to write.", file=sys.stderr)
-        return 1
-
-    if target.exists() and target.read_text() == rendered:
-        print(f"hook-parity: {target} already matches the derived contract — no change")
-        return 0
-
-    if target.exists():
-        backup = target.with_suffix(target.suffix + f".bak-{datetime.now():%Y%m%d-%H%M%S}")
-        shutil.copy2(target, backup)
-        print(f"hook-parity: backed up  {backup}")
-    else:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        print(f"hook-parity: {target} did not exist — deriving it from scratch")
-
-    target.write_text(rendered)
-    target.chmod(target.stat().st_mode | 0o111)          # hooks are executed
-
-    # A hook that does not parse silently stops serving the contract.
-    bad = subprocess.run(["bash", "-n", str(target)], capture_output=True, text=True)
-    if bad.returncode != 0:
-        print(f"hook-parity: WROTE A FILE THAT DOES NOT PARSE — {bad.stderr.strip()}",
-              file=sys.stderr)
-        return 1
-
-    print(f"hook-parity: wrote {target} ({len(rendered)} bytes, "
-          f"{len(CODEX_DELTA)} transforms applied, bash -n clean)")
-    return 0
+    import tempfile
+    import uuid
+    outs = []
+    payload = '{"session_id":"parity-%s"}' % uuid.uuid4().hex[:12]
+    for path in (CLAUDE, CODEX):
+        # One session id for both; a store each, so neither sees the other's first prompt.
+        with tempfile.TemporaryDirectory() as once:
+            env = {**os.environ, "OKWOW_HOOK_ONCE_DIR": once,
+                   "OKWOW_PARK": str(Path(once) / "no-park.py")}
+            p = subprocess.run(["bash", str(path)], input=payload, capture_output=True,
+                               text=True, env=env, timeout=10)
+            outs.append(p.stdout)
+    return outs[0], outs[1]
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(prog="check_hook_parity")
     ap.add_argument("--write-codex", action="store_true",
-                    help="derive the Codex hook from the Claude copy + CODEX_DELTA")
-    ap.add_argument("--target", type=Path, default=CODEX,
-                    help="where to write (tests point this at a temp file)")
+                    help="retired: the Codex hook is a link now; same as --link")
     ap.add_argument("--link", action="store_true",
                     help="replace every served copy of a tracked hook with a link to it")
     a = ap.parse_args()
 
-    if a.write_codex:
-        return write_codex(a.target)
-    if a.link:
+    if a.link or a.write_codex:
         return link_all()
 
     for f in (CLAUDE, CODEX):
@@ -209,12 +163,12 @@ def main() -> int:
             print(f"hook-parity: MISSING {f}", file=sys.stderr)
             return 1
 
-    claude, codex = CLAUDE.read_text(), CODEX.read_text()
+    claude, codex = served_outputs()
 
     expected = claude
     for src, dst, why in CODEX_DELTA:
         if src not in expected:
-            print(f"hook-parity: the Claude copy no longer contains a passage this "
+            print(f"hook-parity: the Claude output no longer contains a passage this "
                   f"transform expects:\n    {src.strip()[:70]}…\n"
                   f"  Either the Claude hook changed and CODEX_DELTA needs updating, or "
                   f"the delta is stale.", file=sys.stderr)
@@ -224,7 +178,7 @@ def main() -> int:
     stale = unlinked()
 
     if expected == codex and not stale:
-        print("hook-parity: Claude and Codex hooks agree "
+        print("hook-parity: Claude and Codex output agree "
               f"({len(CODEX_DELTA)} declared differences); every served hook is "
               f"the tracked file")
         return 0
@@ -241,7 +195,7 @@ def main() -> int:
             return 1
         print(file=sys.stderr)
 
-    print("hook-parity: DRIFT — the Codex hook is not the Claude hook plus its "
+    print("hook-parity: DRIFT — the Codex output is not the Claude output plus its "
           "declared differences\n", file=sys.stderr)
     diff = difflib.unified_diff(
         expected.splitlines(keepends=True), codex.splitlines(keepends=True),
