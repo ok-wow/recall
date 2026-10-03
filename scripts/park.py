@@ -7,9 +7,9 @@ system to keep it, so this is a store any session can write and recall
 searches: one JSON file per item under $RECALL_HOME/lot/items.
 
     park.py add --title "..." [--body TEXT|-] [--tier 1|2|3|inbox] [--theme T] ...
-    park.py list [--tier N|inbox] [--session ID] [--theme T] [--status S] [--owner-said]
+    park.py list [--tier N|inbox] [--lane L] [--effort E] [--sort tier|lane|effort] ...
     park.py show ID
-    park.py set ID [--tier N|inbox] [--status S] [--theme T] [--title T] [--linear L] ...
+    park.py set ID [--tier N|inbox] [--lane L] [--effort E] [--status S] [--theme T] ...
     park.py done ID [--note TEXT]
     park.py kill ID --why TEXT
     park.py import FILE.jsonl
@@ -129,10 +129,16 @@ def make_item(f: dict, session: str | None) -> dict:
     stamp = now()
     # An import may carry the date the work was first deferred; its age is real.
     created = str(f.get("created") or "")
+    lane, effort = f.get("lane") or None, f.get("effort") or None
+    if lane is not None and lane not in R.LOT_LANES:
+        raise Refused(BAD, f"lane must be one of: {', '.join(R.LOT_LANES)}")
+    if effort is not None and effort not in R.LOT_EFFORTS:
+        raise Refused(BAD, f"effort must be one of: {', '.join(R.LOT_EFFORTS)}")
     return {
         "id": iid, "title": title, "body": str(f.get("body") or "").strip(),
         "first_move": one_line(f.get("first_move")) or None,
-        "theme": theme, "tier": parse_tier(f.get("tier")), "status": status,
+        "theme": theme, "tier": parse_tier(f.get("tier")), "lane": lane, "effort": effort,
+        "status": status,
         "owner_said": f.get("owner_said") is True,
         "source": {"session_id": src.get("session_id") or session, "kind": kind,
                    "ref": src.get("ref") or None, "quote": quote},
@@ -339,7 +345,8 @@ def cmd_add(a, session) -> int:
     body = sys.stdin.read() if a.body == "-" else a.body
     item = make_item({
         "id": a.id, "title": a.title, "body": body, "first_move": a.first_move,
-        "theme": a.theme, "tier": a.tier, "owner_said": a.owner_said,
+        "theme": a.theme, "tier": a.tier, "lane": a.lane, "effort": a.effort,
+        "owner_said": a.owner_said,
         "source": {"session_id": session, "kind": a.source_kind, "ref": a.source_ref,
                    "quote": a.quote},
         "links": {"linear": a.linear, "prs": a.pr or [], "spec": a.spec},
@@ -402,7 +409,16 @@ def cmd_list(a, session) -> int:
         sel = [i for i in sel if i.get("theme") == a.theme]
     if a.owner_said:
         sel = [i for i in sel if i.get("owner_said")]
+    if a.lane:
+        sel = [i for i in sel if i.get("lane") == a.lane]
+    if a.effort:
+        sel = [i for i in sel if i.get("effort") == a.effort]
     sel = R.lot_order(sel)
+    # A stable sort over the tier order: within one lane or effort, the most
+    # urgent still comes first. Items without the field go last.
+    order = {"lane": R.LOT_LANES, "effort": R.LOT_EFFORTS}.get(a.sort)
+    if order:
+        sel.sort(key=lambda i: order.index(i[a.sort]) if i.get(a.sort) in order else len(order))
     emit(a, sel, R.lot_table(sel, R.lot_tier1_open(items)))
     return OK
 
@@ -437,6 +453,8 @@ def cmd_set(a, session) -> int:
                 item["tier"] = tier
         put("status", a.status, lambda o, v: f"status {o} -> {v}")
         put("theme", a.theme, lambda o, v: f"theme {o} -> {v}")
+        put("lane", a.lane, lambda o, v: f"lane {o or 'none'} -> {v}")
+        put("effort", a.effort, lambda o, v: f"effort {o or 'none'} -> {v}")
         if a.title is not None:
             title = one_line(a.title)
             if not title or len(title) > TITLE_MAX:
@@ -633,6 +651,9 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--theme", choices=THEMES)
         p.add_argument("--tier", choices=("1", "2", "3", "inbox"),
                        help="1 do next, 2 soon, 3 someday, inbox not sorted yet")
+        p.add_argument("--lane", choices=R.LOT_LANES,
+                       help="who picks it up: overnight runner, the owner, or a spec first")
+        p.add_argument("--effort", choices=R.LOT_EFFORTS, help="size in AI time: S, M or L")
         p.add_argument("--first-move", help="the first concrete step")
         p.add_argument("--owner-said", action="store_true",
                        help="the owner asked for this in their own words")
@@ -662,6 +683,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--theme", choices=THEMES)
     p.add_argument("--status", choices=STATUSES, help="default: parked and in-progress")
     p.add_argument("--owner-said", action="store_true")
+    p.add_argument("--lane", choices=R.LOT_LANES)
+    p.add_argument("--effort", choices=R.LOT_EFFORTS)
+    p.add_argument("--sort", choices=("tier", "lane", "effort"), default="tier",
+                   help="group by lane or effort; tier order holds within a group")
     p.set_defaults(run=cmd_list)
 
     p = sub.add_parser("show", parents=[common], help="one item in full")

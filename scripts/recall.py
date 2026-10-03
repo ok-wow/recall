@@ -853,6 +853,10 @@ LOT_OPEN = ("parked", "in-progress")
 LOT_TIER_LABEL = {1: "do next", 2: "soon", 3: "someday"}
 # A "do next" list with twenty items in it is a list nobody reads. See park.py.
 LOT_TIER1_CAP = 5
+# Who picks an item up, and how long it takes in AI time. Tier stays the
+# priority; these let a runner or a board select and sort without guessing.
+LOT_LANES = ("overnight", "owner", "spec")
+LOT_EFFORTS = ("S", "M", "L")
 
 
 def read_lot(broken: list[dict]) -> list[dict]:
@@ -921,7 +925,7 @@ def lot_order(items: list[dict]) -> list[dict]:
 
 
 def lot_table(items: list[dict], tier1_open: int | None = None) -> str:
-    """The list a person scans: tier, id, title, theme, age in days.
+    """The list a person scans: tier, lane, effort, id, title, theme, age in days.
 
     tier1_open is counted by the caller over the whole store, because a
     filtered list cannot tell how full tier 1 is.
@@ -936,12 +940,13 @@ def lot_table(items: list[dict], tier1_open: int | None = None) -> str:
         except ValueError:
             age = "?"
         title = " ".join(str(i.get("title") or "").split())
-        rows.append((f"{lot_tier(i) or 'inbox'}{'*' if i.get('owner_said') else ''}", i["id"],
+        rows.append((f"{lot_tier(i) or 'inbox'}{'*' if i.get('owner_said') else ''}",
+                     str(i.get("lane") or "-"), str(i.get("effort") or "-"), i["id"],
                      title if len(title) <= 50 else title[:49] + "…",
                      str(i.get("theme") or "other"), age))
-    head = ("tier", "id", "title", "theme", "age")
-    w = [max(len(r[c]) for r in rows + [head]) for c in range(4)]
-    lines = ["  " + "  ".join(r[c].ljust(w[c]) for c in range(4)) + "  " + r[4]
+    head = ("tier", "lane", "effort", "id", "title", "theme", "age")
+    w = [max(len(r[c]) for r in rows + [head]) for c in range(6)]
+    lines = ["  " + "  ".join(r[c].ljust(w[c]) for c in range(6)) + "  " + r[6]
              for r in [head] + rows]
     lines.append(f"\n  {len(items)} listed"
                  + (f" · tier 1 holds {tier1_open} of {LOT_TIER1_CAP}" if tier1_open is not None else "")
@@ -959,6 +964,8 @@ def lot_lines(r: dict, full: bool = False) -> list[str]:
     t = lot_tier(r)
     out.append(f"  {f'tier {t} · {LOT_TIER_LABEL[t]}' if t else 'not sorted'} · "
                f"{r.get('status') or 'parked'} · {r.get('theme') or 'other'}"
+               + (f" · lane {r['lane']}" if r.get("lane") else "")
+               + (f" · effort {r['effort']}" if r.get("effort") else "")
                + (" · the owner asked for it" if r.get("owner_said") else ""))
     src = r.get("source") if isinstance(r.get("source"), dict) else {}
     kind, ref = src.get("kind"), src.get("ref")
