@@ -20,9 +20,14 @@ beyond review. The span logic below is inherited from a writer that was
 hardened through three real shape variants in this corpus; the comments say
 which, because each one silently wrote to the wrong place first.
 
+A note also has to name its session. The date says when; the session says
+which run, and only that joins a recurrence to what surfaced.jsonl shows was put
+in front of that session before it failed. Pass --session, or write
+"session <id>" in the note; a note with neither is refused.
+
 Usage:
-    bump_recurrence.py <catalog.yaml> <entry-id> <note-file>
-    bump_recurrence.py <catalog.yaml> <entry-id> -        # note on stdin
+    bump_recurrence.py [--session SID] <catalog.yaml> <entry-id> <note-file>
+    bump_recurrence.py [--session SID] <catalog.yaml> <entry-id> -   # note on stdin
 """
 from __future__ import annotations
 
@@ -35,6 +40,8 @@ from pathlib import Path
 import yaml
 
 DATED = re.compile(r"^recurrence_\d{4}_\d{2}_\d{2}$")
+# "session cd406b8e", "session: 0040ce0d-87e5-...": a hex id of 6+ characters.
+SESSION_IN_NOTE = re.compile(r"\bsession[:\s]+([0-9a-f]{6}[0-9a-f-]*)\b", re.I)
 
 
 class DupCatch(yaml.SafeLoader):
@@ -194,13 +201,25 @@ def entries(doc) -> list:
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    args = sys.argv[1:]
+    session = ""
+    if "--session" in args:
+        i = args.index("--session")
+        session = args[i + 1].strip() if i + 1 < len(args) else ""
+        del args[i:i + 2]
+    if len(args) != 3:
         raise SystemExit(__doc__.strip().splitlines()[-2].strip())
-    path, eid, notefile = sys.argv[1], sys.argv[2], sys.argv[3]
+    path, eid, notefile = args
     note = " ".join((sys.stdin.read() if notefile == "-"
                      else Path(notefile).read_text()).split())
     if not note:
         raise SystemExit("a recurrence with no note is a counter again — refusing")
+    if session and session.lower() not in note.lower():
+        note = f"{note} (session {session})"
+    if not session and not SESSION_IN_NOTE.search(note):
+        raise SystemExit("a recurrence with no session id cannot be joined to what was "
+                         "surfaced first — pass --session <id> or write 'session <id>' "
+                         "in the note — refusing")
 
     p = Path(path)
     text = p.read_text()
