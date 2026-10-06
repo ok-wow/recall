@@ -286,9 +286,13 @@ def write_atomic(path: Path, text: str) -> None:
             os.unlink(tmp)
 
 
+WRITTEN: list[Path] = []  # committed together once the command succeeds
+
+
 def save(item: dict) -> Path:
     path = R.LOT_DIR / f"{item['id']}.json"
     write_atomic(path, json.dumps(item, indent=2, ensure_ascii=False) + "\n")
+    WRITTEN.append(path)
     return path
 
 
@@ -723,7 +727,11 @@ def main(argv: list[str] | None = None) -> int:
     session = (getattr(a, "session", None) if a.cmd != "list" else None) \
         or os.environ.get("RECALL_SESSION_ID") or None
     try:
-        return a.run(a, session)
+        rc = a.run(a, session)
+        if rc == 0 and WRITTEN:
+            from store_commit import report
+            report(WRITTEN, f"lot: {a.cmd} {', '.join(p.stem for p in WRITTEN)[:120]}")
+        return rc
     except Refused as r:
         if a.json:
             print(json.dumps({"error": r.message, **r.payload}, indent=2, ensure_ascii=False))

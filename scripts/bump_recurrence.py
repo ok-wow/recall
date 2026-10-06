@@ -249,6 +249,9 @@ def main() -> int:
     p.write_text(patched)
     print(f"ok  {eid}  recurrences {b4} -> {b4 + 1}  {key} written "
           f"({len(note)} chars)")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from store_commit import report
+    report([p], f"catalog: {eid} recurred ({today()})")
     return 0
 
 
