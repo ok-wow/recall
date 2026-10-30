@@ -94,6 +94,7 @@ def run(d: Path, *args: str, probe_index: str | None = None,
            "RECALL_RECEIPT_DIR": str(d / "nonexistent-receipts"),
            "RECALL_ORPHAN_INDEX": str(d / "nonexistent-orphans.yaml"),
            "RECALL_LOT_DIR": str(d / "nonexistent-lot"),
+           "RECALL_PEOPLE_DIR": str(d / "no-people"),
            "RECALL_SPECS_DIR": str(d / "nonexistent-specs-dir"),
            "RECALL_PROBE_INDEX": probe_index or str(d / "nonexistent-index.json"),
            "RECALL_SURFACED_LOG": surfaced_log or str(d / "surfaced.jsonl")}
@@ -281,6 +282,7 @@ def main() -> int:
            "RECALL_RECEIPT_DIR": str(d / "nonexistent-receipts"),
            "RECALL_ORPHAN_INDEX": str(d / "nonexistent-orphans.yaml"),
            "RECALL_LOT_DIR": str(d / "nonexistent-lot"),
+           "RECALL_PEOPLE_DIR": str(d / "no-people"),
            "RECALL_SPECS_DIR": str(d / "nonexistent-specs-dir"),
                  "RECALL_SURFACED_LOG": str(plog), "RECALL_HOME": str(d / "fake-home"),
                  "RECALL_SPECS_INDEX": str(d / "nonexistent-specs.txt"),
@@ -292,6 +294,23 @@ def main() -> int:
                    capture_output=True, text=True, env=env_probe)
     check("an overridden log means production is never touched",
           not prod.exists() and not (d / "fake-home" / "surfaced.jsonl").exists())
+
+    # A hook renders from the query's own JSON and does not log its lookups.
+    hlog = d / "hook-surfaced.jsonl"
+    rc, out = run(d, "a follow-up in a handoff nobody rereads", "--json", "-n", "3",
+                  surfaced_log=str(hlog))
+    rows = json.loads(out) if rc == 0 else []
+    check("--json rows carry summary, fix and pointer",
+          bool(rows) and all({"summary", "fix", "pointer"} <= set(r) for r in rows)
+          and rows[0]["summary"], out[:200])
+    os.environ["RECALL_CALLER"] = "hook"
+    try:
+        hlog2 = d / "hook-surfaced-2.jsonl"
+        run(d, "a follow-up in a handoff nobody rereads", "--json", surfaced_log=str(hlog2))
+        check("RECALL_CALLER=hook writes no pull row", not hlog2.exists(),
+              hlog2.read_text()[:200] if hlog2.exists() else "")
+    finally:
+        del os.environ["RECALL_CALLER"]
 
     if fails:
         print(f"\nFAIL {len(fails)}/{ran[0]}")
