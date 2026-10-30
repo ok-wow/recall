@@ -205,8 +205,12 @@ class TickTest(unittest.TestCase):
         good = {'schema_version': 1, 'actions': []}
         self.assertEqual(worker.parse_result(json.dumps({'result': json.dumps(good)})), good)
         self.assertEqual(worker.parse_result(json.dumps({'structured_output': good})), good)
+        self.assertEqual(worker.parse_result(json.dumps({'result': '', 'structured_output': good})), good)
+        self.assertEqual(worker.parse_result(json.dumps({'result': json.dumps(good), 'structured_output': good})), good)
         for bad in ['{}', '{broken', '{"result":"{}","result":"{}"}',
                     json.dumps({'result': '{}', 'structured_output': good}),
+                    json.dumps({'result': '{"schema_version":1,"approved":1}',
+                                'structured_output': {'schema_version': 1, 'approved': True}}),
                     json.dumps({'is_error': True, 'result': json.dumps(good)}),
                     '{"result":"{\"schema_version\":1,\"value\":NaN}"}']:
             with self.assertRaises(ValueError): worker.parse_result(bad)
@@ -219,6 +223,15 @@ class TickTest(unittest.TestCase):
         self.assertEqual(argv[argv.index('--tools') + 1], '')
         self.assertEqual(json.loads(argv[argv.index('--mcp-config') + 1]), {'mcpServers': {}})
         self.assertEqual(argv[argv.index('--max-budget-usd') + 1], '.50')
+
+    def test_worker_requests_native_structured_roles(self):
+        for role, required in [('proposer', {'schema_version','actions'}),
+                               ('reviewer', {'schema_version','approved','plan_sha256',
+                                             'checks_sha256','review_context_sha256','rationale'})]:
+            argv=worker.command('claude','haiku','prompt',role)
+            schema=json.loads(argv[argv.index('--json-schema')+1])
+            self.assertEqual(set(schema['required']),required)
+            self.assertFalse(schema['additionalProperties'])
 
 
 if __name__ == '__main__': unittest.main()

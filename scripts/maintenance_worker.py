@@ -30,20 +30,45 @@ def parse_result(text):
     envelope = json.loads(text, object_pairs_hook=unique, parse_constant=reject_constant)
     if not isinstance(envelope, dict) or envelope.get('is_error'):
         raise ValueError('native worker error')
-    supplied = [k for k in ('structured_output', 'result') if k in envelope]
-    if len(supplied) != 1:
-        raise ValueError('exactly one native result channel required')
-    result = envelope[supplied[0]]
-    if isinstance(result, str):
-        result = json.loads(result, object_pairs_hook=unique, parse_constant=reject_constant)
+    supplied = [k for k in ('structured_output', 'result')
+                if k in envelope and envelope[k] is not None and envelope[k] != '']
+    def decode(value):
+        return json.loads(value, object_pairs_hook=unique, parse_constant=reject_constant) if isinstance(value, str) else value
+    if not supplied:
+        raise ValueError('native result channel missing')
+    result = decode(envelope[supplied[0]])
+    # Native structured print can echo the same object in both channels.
+    if len(supplied) == 2:
+        second = decode(envelope[supplied[1]])
+        if json.dumps(result, sort_keys=True) != json.dumps(second, sort_keys=True):
+            raise ValueError('conflicting native result channels')
     if not isinstance(result, dict) or type(result.get('schema_version')) is not int or result['schema_version'] != 1:
         raise ValueError('worker result requires schema_version 1')
     return result
 
 
-def command(binary, model, prompt):
+def schema_for(role, request=None):
+    if role == 'proposer':
+        properties = {'schema_version': {'const': 1},
+                      'actions': {'type': 'array', 'maxItems': 3, 'items': {'type': 'object'}}}
+    elif role == 'reviewer':
+        properties = {'schema_version': {'const': 1}, 'approved': {'type': 'boolean'},
+                      'rationale': {'type': 'string', 'minLength': 1}}
+        properties.update({key: {'type': 'string', 'pattern': '^[0-9a-f]{64}$'}
+                           for key in ('plan_sha256', 'checks_sha256', 'review_context_sha256')})
+        if request is not None:
+            properties.update({key: {'const': request[key]}
+                               for key in ('plan_sha256', 'checks_sha256', 'review_context_sha256')})
+    else:
+        raise ValueError('unknown structured worker role')
+    return {'type': 'object', 'properties': properties,
+            'required': list(properties), 'additionalProperties': False}
+
+
+def command(binary, model, prompt, role='proposer', request=None):
     return [binary, '--safe-mode', '--setting-sources', '', '--strict-mcp-config',
             '--mcp-config', '{"mcpServers":{}}', '--tools', '', '--model', model, '--output-format', 'json',
+            '--json-schema', json.dumps(schema_for(role, request), separators=(',', ':')),
             '--max-budget-usd', '.50', '--no-session-persistence', '--print', prompt]
 
 
@@ -93,10 +118,13 @@ def main(argv=None):
             raise ValueError('request exceeds bounded snapshot size')
         request = json.loads(raw, object_pairs_hook=unique, parse_constant=reject_constant)
         prompt = prompt_for(request)
-        result = subprocess.run(command(args.binary, args.model, prompt), capture_output=True,
+        result = subprocess.run(command(args.binary, args.model, prompt, request['role'], request), capture_output=True,
                                 text=True, timeout=115)
         if result.returncode:
             raise ValueError('native worker exited ' + str(result.returncode) + ': ' + result.stderr[:800])
+        # The supervisor already captures this private stream for native usage
+        # and parser diagnostics. Do not discard the only evidence on refusal.
+        sys.stdout.write(result.stdout[:MAX_OUTPUT])
         obj = parse_result(result.stdout)
         Path(args.output).write_text(json.dumps(obj, ensure_ascii=False) + '\n')
         return 0
