@@ -90,8 +90,10 @@ def load_skill(f: Path) -> dict:
     return {e["id"]: e for e in yaml.safe_load(f.read_text())["rules"]}
 
 
-def run(path: Path, eid: str, note: str, today: str = TODAY) -> tuple[int, str]:
-    p = subprocess.run([sys.executable, str(BUMP), str(path), eid, "-"],
+def run(path: Path, eid: str, note: str, today: str = TODAY,
+        session: str | None = "abc12345") -> tuple[int, str]:
+    sess = ["--session", session] if session else []
+    p = subprocess.run([sys.executable, str(BUMP), *sess, str(path), eid, "-"],
                        input=note, capture_output=True, text=True,
                        env={**os.environ, "RECALL_TODAY": today.replace("_", "-")})
     return p.returncode, p.stdout + p.stderr
@@ -228,6 +230,18 @@ def main() -> int:
     check("an unknown id is still refused", rc != 0 and "not found" in out, out[:100])
     check("a refused run wrote nothing", f.read_text() == SKILL_RULES)
 
+
+    # A note has to name its session, or the recurrence cannot be joined to what
+    # was surfaced to that session before it failed.
+    f = fresh()
+    rc, out = run(f, "id-is-not-the-first-key", "Failed again, no session named.", session=None)
+    check("a note with no session id is refused", rc != 0 and "session" in out, out[:120])
+    check("a refused session-less note wrote nothing", f.read_text() == CATALOG)
+    rc, out = run(f, "id-is-not-the-first-key", "Failed again in session 0040ce0d.", session=None)
+    check("'session <id>' in the note is accepted", rc == 0, out[:120])
+    rc, out = run(f, "entry-with-no-counter-at-all", "Failed once more.", session="cd406b8e")
+    v = str(load(f)["entry-with-no-counter-at-all"].get(f"recurrence_{TODAY}", ""))
+    check("--session is written into the note", rc == 0 and "session cd406b8e" in v, v[:120])
 
     print()
     if fails:
