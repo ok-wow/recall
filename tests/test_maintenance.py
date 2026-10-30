@@ -382,7 +382,7 @@ class MaintenanceTest(unittest.TestCase):
                 self.assertEqual(self.catalog.read_text(), self.original)
                 self.assertFalse((self.home / 'maintenance').exists())
 
-    def make_outcome(self, entry_id='a', revision=None, run='new-run'):
+    def make_outcome(self, entry_id='a', revision=None, run='new-run', scheme=None, ok=True):
         if revision is None:
             revision = entry_sha({'id': 'a', 'fix_pattern': 'old', 'recurrences': 2,
                                   'recurrence_2026_01_01': 'corrected remedy'})
@@ -391,8 +391,11 @@ class MaintenanceTest(unittest.TestCase):
                    'lesson_revision': revision, 'run': run, 'task': 'task',
                    'arm': 'current', 'session': None, 'time': None, 'actual_tokens': None,
                    'evidence': [{'path': str(self.evidence), 'sha256': sha(self.evidence.read_bytes())}]}
+        if scheme is not None:
+            outcome['revision_scheme'] = scheme
         path = self.home / ('outcome-' + run + '.json'); path.write_text(json.dumps(outcome))
-        return self.run_cli('outcome', '--file', str(path))['outcome_id']
+        result = self.run_cli('outcome', '--file', str(path), ok=ok)
+        return result['outcome_id'] if ok else result
 
     def set_keep_plan(self):
         config = json.loads(self.config.read_text())
@@ -472,6 +475,120 @@ class MaintenanceTest(unittest.TestCase):
                 prepared = maintenance.prepare(self.planpath, self.reviewpath)
         self.assertEqual(prepared[0]['actions'][0]['rationale'], 'replacement rationale')
         self.assertEqual(prepared[1], sha(replacement_bytes))
+
+    def test_stable_guidance_outcome_survives_recurrence_metadata_bump(self):
+        stable = entry_sha({'id': 'a', 'fix_pattern': 'old'})
+        oid = self.make_outcome(revision=stable, scheme='guidance_v1')
+        self.catalog.write_text(self.original.replace('recurrences: 2', 'recurrences: 3') +
+                                '  # independent appended capture\n')
+        result = self.run_cli('scan')
+        a = next(r for r in result['candidates'] if r['id'] == 'a')
+        self.assertIn(oid, a['outcome_ids'])
+        self.assertEqual(a['guidance_revision'], stable)
+        self.assertEqual(a['revision_scheme'], 'guidance_v1')
+        self.assertNotIn(oid, [r['outcome_id'] for r in result['historical_outcomes']])
+
+    def test_actual_guidance_changes_invalidate_stable_outcome(self):
+        stable = entry_sha({'id': 'a', 'fix_pattern': 'old'})
+        oid = self.make_outcome(revision=stable, scheme='guidance_v1')
+        self.apply('--apply')
+        result = self.run_cli('scan')
+        self.assertNotIn('a', [r['id'] for r in result['candidates']])
+        self.assertIn(oid, [r['outcome_id'] for r in result['historical_outcomes']])
+
+    def test_stable_outcome_can_be_reviewed_after_metadata_bump_without_consuming_late_failure(self):
+        stable = entry_sha({'id': 'a', 'fix_pattern': 'old'})
+        early = self.make_outcome(revision=stable, scheme='guidance_v1', run='early-stable')
+        self.catalog.write_text(self.original.replace('recurrences: 2', 'recurrences: 3'))
+        self.plan['catalog_sha256'] = sha(self.catalog.read_bytes())
+        self.plan['actions'][0]['entry_sha256'] = entry_sha({'id': 'a', 'fix_pattern': 'old',
+            'recurrences': 3, 'recurrence_2026_01_01': 'corrected remedy'})
+        self.plan['outcome_ids'] = [early]; self.set_keep_plan()
+        late = self.make_outcome(revision=stable, scheme='guidance_v1', run='late-stable')
+        result = self.apply('--apply')
+        self.assertEqual(result['outcome_ids_reviewed'], [early])
+        a = self.run_cli('scan')['candidates'][0]
+        self.assertEqual(a['outcome_ids'], [late])
+
+    def test_legacy_outcomes_remain_unchanged_and_use_entry_revision(self):
+        legacy = self.make_outcome()
+        stored = self.home / 'maintenance' / 'outcomes' / (legacy + '.json')
+        before = stored.read_bytes()
+        self.catalog.write_text(self.original.replace('recurrences: 2', 'recurrences: 3'))
+        result = self.run_cli('scan')
+        self.assertIn(legacy, [r['outcome_id'] for r in result['historical_outcomes']])
+        self.assertEqual(stored.read_bytes(), before)
+        self.assertNotIn('revision_scheme', json.loads(before))
+
+    def test_revision_cli_excludes_only_recurrence_telemetry(self):
+        row = {'id': 'a', 'fix_pattern': 'old'}
+        base = self.run_cli('revision', '--catalog', 'FM', '--id', 'a')
+        self.assertEqual(base['guidance_revision'], entry_sha(row))
+        self.assertEqual(base['entry_sha256'], self.plan['actions'][0]['entry_sha256'])
+        self.assertFalse((self.home / 'maintenance').exists())
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import maintenance
+        for field in ('recurrences', 'recurrence', 'recurrence_2026_10_30', 'recurrence-2026-10-30'):
+            self.assertEqual(maintenance.guidance_revision(dict(row, **{field: 'telemetry'})), entry_sha(row))
+        for field in ('fix_pattern', 'trigger', 'status', 'probe_when', 'context', 'use_count', 'recurrence_policy'):
+            self.assertNotEqual(maintenance.guidance_revision(dict(row, **{field: 'changed'})), entry_sha(row))
+
+    def test_unknown_revision_scheme_is_refused(self):
+        self.make_outcome(scheme='unknown_v2', ok=False)
+
+    def test_nonempty_outcome_rewrite_retry_uses_verified_preimage_without_reapplying(self):
+        for scheme in ('guidance_v1', 'entry_v1'):
+            with self.subTest(scheme=scheme):
+                fixture = MaintenanceTest(); fixture.setUp()
+                try:
+                    revision = (entry_sha({'id': 'a', 'fix_pattern': 'old'}) if scheme == 'guidance_v1'
+                                else fixture.plan['actions'][0]['entry_sha256'])
+                    oid = fixture.make_outcome(revision=revision, scheme=scheme)
+                    fixture.plan['outcome_ids'] = [oid]; fixture.save_plan()
+                    pf = fixture.home / 'catalogs' / 'PROCESS_FAILURES.yaml'; pf.unlink()
+                    failed = fixture.apply('--apply', ok=False)
+                    pending = json.loads(failed.stdout)
+                    self.assertEqual(pending['state'], 'pending_index_repair')
+                    post = fixture.catalog.read_bytes()
+                    late = fixture.make_outcome(revision=revision, scheme=scheme, run='late')
+                    pf.write_text('- id: restored\n  fix_pattern: retained\n')
+                    repaired = fixture.apply('--apply')
+                    self.assertEqual(repaired['state'], 'applied')
+                    self.assertEqual(fixture.catalog.read_bytes(), post)
+                    self.assertEqual(repaired['outcome_ids_reviewed'], [oid])
+                    self.assertNotIn(late, repaired['outcome_ids_reviewed'])
+                finally:
+                    fixture.doCleanups()
+
+    def test_pending_retry_refuses_untrusted_preimage_and_plan_binding(self):
+        for damage in ('missing_backup', 'wrong_backup', 'wrong_operation', 'wrong_bound_plan', 'intervening_catalog'):
+            with self.subTest(damage=damage):
+                fixture = MaintenanceTest(); fixture.setUp()
+                try:
+                    oid = fixture.make_outcome(revision=entry_sha({'id': 'a', 'fix_pattern': 'old'}), scheme='guidance_v1')
+                    fixture.plan['outcome_ids'] = [oid]; fixture.set_keep_plan()
+                    pf = fixture.home / 'catalogs' / 'PROCESS_FAILURES.yaml'; pf.unlink()
+                    pending = json.loads(fixture.apply('--apply', ok=False).stdout)
+                    post = fixture.catalog.read_bytes()
+                    journalpath = Path(pending['journal'])
+                    if damage == 'missing_backup':
+                        Path(pending['backup']).unlink()
+                    elif damage == 'wrong_backup':
+                        Path(pending['backup']).write_text('wrong preimage')
+                    elif damage == 'wrong_operation':
+                        journal = json.loads(journalpath.read_text()); journal['operation_id'] = 'wrong'
+                        journalpath.write_text(json.dumps(journal))
+                    elif damage == 'wrong_bound_plan':
+                        journalpath.with_name('plan.json').write_text('{}')
+                    else:
+                        fixture.catalog.write_bytes(post + b'# intervening\n')
+                    expected = fixture.catalog.read_bytes()
+                    pf.write_text('- id: restored\n  fix_pattern: retained\n')
+                    fixture.apply('--apply', ok=False)
+                    self.assertEqual(fixture.catalog.read_bytes(), expected)
+                    self.assertFalse((fixture.home / 'index.json').exists())
+                finally:
+                    fixture.doCleanups()
 
 
 if __name__ == '__main__':

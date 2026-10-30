@@ -45,6 +45,28 @@ def entry_hash(entry):
                              separators=(',', ':'), default=str).encode('utf-8'))
 
 
+def guidance_revision(row):
+    """Keep semantic/provenance fields; omit only known recurrence telemetry.
+
+    The full entry hash still guards writes and review suppression. Use counts
+    stay conservative because their semantics are not standardized here.
+    """
+    return entry_hash({key: value for key, value in row.items()
+                       if key not in {'recurrences', 'recurrence'}
+                       and not re.fullmatch(r'recurrence[_-]\d{4}[_-]\d{2}[_-]\d{2}', str(key))})
+
+
+def outcome_scheme(record):
+    scheme = record.get('revision_scheme', 'entry_v1')
+    if scheme not in {'entry_v1', 'guidance_v1'}:
+        raise Refused('unknown outcome revision_scheme: ' + str(scheme))
+    return scheme
+
+
+def lesson_revision(row, scheme):
+    return guidance_revision(row) if scheme == 'guidance_v1' else entry_hash(row)
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -250,19 +272,23 @@ def prepare(planpath, reviewpath):
     return plan, plan_sha, path, checks, plan_bytes, review_bytes
 
 
-def validate_outcome_ids(plan):
+def validate_outcome_ids(plan, rows=None):
     ids = plan.get('outcome_ids')
     if (not isinstance(ids, list) or any(not isinstance(oid, str) for oid in ids)
             or len(ids) != len(set(ids))):
         raise Refused('reviewed plan requires explicit unique outcome_ids (empty allowed)')
-    affected = {(plan['catalog'], action['id'], action['entry_sha256'])
-                for action in plan['actions']}
+    affected = {action['id'] for action in plan['actions']}
     outcomes = {entry_hash(record): record for record in outcome_records()}
     for oid in ids:
         record = outcomes.get(oid)
-        if (record is None or (record.get('catalog'), record.get('entry_id'),
-                              record.get('lesson_revision')) not in affected):
+        if (record is None or record.get('catalog') != plan['catalog']
+                or record.get('entry_id') not in affected):
             raise Refused('reviewed outcome must match affected entry and exact lesson revision: ' + oid)
+        scheme = outcome_scheme(record)
+        if rows is not None:
+            row = rows.get(record['entry_id'])
+            if row is None or record.get('lesson_revision') != lesson_revision(row, scheme):
+                raise Refused('reviewed outcome must match affected entry and exact lesson revision: ' + oid)
 
 
 def patched_catalog(plan, raw, checks):
@@ -326,6 +352,7 @@ def apply_plan(planpath, reviewpath, apply=False):
     backuppath = journalpath.with_name('catalog.before.yaml')
     if not apply:
         raw = path.read_bytes()
+        validate_outcome_ids(plan, load_catalog(raw))
         patched = patched_catalog(plan, raw, checks)
         return {'state': 'dry_run', 'operation_id': operation,
                 'before_sha256': digest(raw), 'after_sha256': digest(patched)}
@@ -338,17 +365,35 @@ def apply_plan(planpath, reviewpath, apply=False):
         for action in plan['actions']:
             verify_evidence(action['evidence'])
         checks = load_checks(plan)
-        validate_outcome_ids(plan)
         raw = path.read_bytes()
         if journalpath.exists():
             journal = read_json(journalpath)
+            if (journal.get('operation_id') != operation or journal.get('plan') != plan
+                    or journal.get('review') != parse_json(review_bytes)
+                    or journal.get('catalog_path') != str(path)
+                    or journal.get('backup') != str(backuppath)
+                    or journal.get('outcome_ids_reviewed') != plan['outcome_ids']
+                    or journalpath.with_name('plan.json').read_bytes() != plan_bytes
+                    or journalpath.with_name('review.json').read_bytes() != review_bytes):
+                raise Refused('transaction does not bind the exact reviewed operation; manual recovery required')
             if digest(raw) != journal['after_sha256']:
                 raise Refused('operation exists but current catalog differs; manual recovery required')
+            preimage = backuppath.read_bytes()
+            if (digest(preimage) != journal['before_sha256']
+                    or journal['before_sha256'] != plan['catalog_sha256']):
+                raise Refused('transaction backup does not match reviewed pre-image')
+            # An index-only retry must judge the original reviewed lesson, not
+            # the post-image it already wrote. Verify that exact transition in
+            # memory; never replace catalog bytes or consume later outcomes.
+            validate_outcome_ids(plan, load_catalog(preimage))
+            if patched_catalog(plan, preimage, checks) != raw:
+                raise Refused('transaction post-image differs from the reviewed change')
             if journal['state'] == 'applied':
                 return dict(journal, state='already_applied')
             if journal['state'] not in {'catalog_written', 'pending_index_repair'}:
                 raise Refused('incomplete transaction needs manual recovery')
         else:
+            validate_outcome_ids(plan, load_catalog(raw))
             patched = patched_catalog(plan, raw, checks)
             dirty = git_dirty(path)
             journal = {'schema_version': 1, 'operation_id': operation, 'state': 'prepared',
@@ -396,6 +441,7 @@ def outcome_records():
 def ingest_outcome(path):
     record = read_json(path)
     require_version(record)
+    outcome_scheme(record)
     author, verifier = nonempty(record, 'author'), nonempty(record, 'verifier')
     if author == verifier:
         raise Refused('outcome needs an independent verifier')
@@ -424,8 +470,9 @@ def scan(limit=3):
     failures = {}
     negative_outcomes = []
     for record in outcome_records():
+        scheme = outcome_scheme(record)
         if record.get('result') in {'failed', 'corrected', 'rejected'}:
-            key = (record['catalog'], record['entry_id'], record.get('lesson_revision'))
+            key = (record['catalog'], record['entry_id'], scheme, record.get('lesson_revision'))
             failures.setdefault(key, set()).add(entry_hash(record))
             negative_outcomes.append(record)
     reviewed = {}
@@ -452,12 +499,15 @@ def scan(limit=3):
                              for row in rows.values()
                              if str(row.get('status', '')).strip().lower() not in INACTIVE)
         for eid, row in rows.items():
-            current_revisions[(label, eid)] = entry_hash(row)
+            current_revisions[(label, eid, 'entry_v1')] = entry_hash(row)
+            current_revisions[(label, eid, 'guidance_v1')] = guidance_revision(row)
             if str(row.get('status', '')).strip().lower() in INACTIVE:
                 continue
             reasons = []
             known = reviewed.get((label, eid, entry_hash(row)))
-            pending_failures = failures.get((label, eid, entry_hash(row)), set()) - (known or set())
+            current_failures = failures.get((label, eid, 'entry_v1', entry_hash(row)), set()) | failures.get(
+                (label, eid, 'guidance_v1', guidance_revision(row)), set())
+            pending_failures = current_failures - (known or set())
             if known is not None and not pending_failures:
                 continue
             if pending_failures:
@@ -473,15 +523,17 @@ def scan(limit=3):
             if reasons:
                 candidates.append({'catalog': label, 'id': eid, 'catalog_path': str(path),
                                    'catalog_sha256': digest(raw), 'entry_sha256': entry_hash(row),
+                                   'guidance_revision': guidance_revision(row), 'revision_scheme': 'guidance_v1',
                                    'outcome_ids': sorted(pending_failures),
                                    'reasons': reasons})
     rank = {'failed_independent_outcome': 0, 'hidden_corrective_note': 1,
             'recurrence': 2, 'duplicate_signature': 3}
     candidates.sort(key=lambda r: (min(rank[x] for x in r['reasons']), r['catalog'], r['id']))
     historical = [{'outcome_id': entry_hash(r), 'catalog': r['catalog'], 'id': r['entry_id'],
+                   'revision_scheme': outcome_scheme(r),
                    'lesson_revision': r.get('lesson_revision'), 'reason': 'not_current_revision'}
                   for r in negative_outcomes
-                  if current_revisions.get((r['catalog'], r['entry_id'])) != r.get('lesson_revision')]
+                  if current_revisions.get((r['catalog'], r['entry_id'], outcome_scheme(r))) != r.get('lesson_revision')]
     return {'schema_version': 1, 'candidates': candidates[:limit], 'total_candidates': len(candidates),
             'historical_outcomes': historical,
             'errors': errors, 'scope': 'FM/PF; other guidance requires review'}
@@ -493,10 +545,22 @@ def report():
             'total': len(records), 'interpretation': 'Descriptive independently evidenced outcomes; not causal proof from exposures.'}
 
 
+def revision(catalog, eid):
+    rows = load_catalog(catalog_path(catalog).read_bytes())
+    if eid not in rows:
+        raise Refused('entry not found: ' + eid)
+    return {'schema_version': 1, 'catalog': catalog, 'id': eid,
+            'entry_sha256': entry_hash(rows[eid]), 'guidance_revision': guidance_revision(rows[eid]),
+            'revision_scheme': 'guidance_v1'}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('scan'); p.add_argument('--limit', type=int, default=3)
+    p = sub.add_parser('revision')
+    p.add_argument('--catalog', choices=tuple(CATALOGS), required=True)
+    p.add_argument('--id', required=True)
     for command in ('validate', 'apply'):
         p = sub.add_parser(command)
         p.add_argument('--plan', required=True)
@@ -509,6 +573,8 @@ def main(argv=None):
     try:
         if args.command == 'scan':
             result = scan(args.limit)
+        elif args.command == 'revision':
+            result = revision(args.catalog, args.id)
         elif args.command == 'outcome':
             result = ingest_outcome(args.file)
         elif args.command == 'report':
