@@ -132,6 +132,7 @@ def run(d: Path, *args: str, url: str | None = None, key: str | None = "test-key
            "RECALL_RECEIPT_DIR": str(d / "nonexistent-receipts"),
            "RECALL_ORPHAN_INDEX": str(d / "nonexistent-orphans.yaml"),
            "RECALL_LOT_DIR": str(d / "nonexistent-lot"),
+           "RECALL_PEOPLE_DIR": str(d / "no-people"),
            "RECALL_SPECS_DIR": str(d / "nonexistent-specs-dir"),
            "RECALL_PROBE_INDEX": str(d / "nonexistent-index.json"),
            "RECALL_SURFACED_LOG": str(log or d / "surfaced.jsonl"),
