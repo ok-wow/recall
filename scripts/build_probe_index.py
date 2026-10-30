@@ -66,6 +66,13 @@ ERROR_MARKER = INDEX_PATH.with_name(INDEX_PATH.name + ".error")
 
 BACKTICK = re.compile(r"`([^`]+)`")
 
+INACTIVE_STATUSES = frozenset({"retired", "superseded", "archived", "removed"})
+
+
+def entry_is_active(entry: dict) -> bool:
+    """Archive explicit lifecycle dispositions without deleting their history."""
+    return str(entry.get("status") or "").strip().casefold() not in INACTIVE_STATUSES
+
 # Tokens that match constantly and mean nothing on their own. A probe that
 # fires on the word "main" fires on every session and teaches the reader to
 # ignore the channel, which costs more than the entry was worth.
@@ -389,6 +396,7 @@ def build() -> dict:
     # only reason that went unnoticed for months is that the build printed a
     # success count and nothing else.
     dropped: dict[str, int] = {
+        "inactive": 0,
         "no_id": 0,
         "no_probe_when": 0,
         "no_backticked_token": 0,
@@ -414,6 +422,9 @@ def build() -> dict:
                 drop("not_a_mapping", None)
                 continue
             eid = entry.get("id")
+            if not entry_is_active(entry):
+                drop("inactive", eid)
+                continue
             pw = entry.get("probe_when")
             if not eid:
                 drop("no_id", None)
@@ -545,6 +556,7 @@ def report(index: dict) -> str:
             f"dropped {d['dropped_total']} of {d['entries_seen']} entries ({pct:.1f}%) "
             f"— auto-injection cannot see them:")
         for reason, label in (
+            ("inactive", "intentionally inactive (history retained)"),
             ("no_backticked_token", "probe_when has no backticked token"),
             ("all_tokens_filtered", "every backticked token was filtered (stopword/short/furniture)"),
             ("no_probe_when", "no probe_when field"),
@@ -555,7 +567,7 @@ def report(index: dict) -> str:
             if n:
                 eg = d["dropped_examples"][reason]
                 lines.append(f"  {n:5}  {label}" + (f"   e.g. {eg[0]}" if eg else ""))
-        lines.append("  recall.py reaches all of them; only auto-injection is limited.")
+        lines.append("  Other omitted entries remain searchable; --id and --include-retired expose inactive history.")
     if d["entries_without_summary"]:
         lines.append(
             f"WARNING: {d['entries_without_summary']} indexed entries have no summary — "
