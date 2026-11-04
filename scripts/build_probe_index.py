@@ -596,7 +596,13 @@ def main() -> int:
         set_error_marker(reason)
         sys.stderr.write(reason + "\n")
         return 2
-    write_index(index)
+    try:
+        write_index(index)
+    except CatalogError as exc:
+        # A newer source won the race; the catalog is fine, so no error marker.
+        sys.stderr.write(f"build_probe_index: did not publish {INDEX_PATH} — {exc}. "
+                         "The previous index is left in place.\n")
+        return 2
     set_error_marker(None)
     print(report(index))
     return 0
