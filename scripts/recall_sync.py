@@ -117,6 +117,21 @@ def build_payload(home: Path, sid: str, transcript, host: str, final: bool, with
             "updated_at": fe.now_iso(), "digest": digest, "friction": friction, "events": events}
 
 
+def _reuse_timestamp(clean: dict, out: Path) -> None:
+    """Keep the last outbox timestamp when nothing else changed, so an idle re-sync is
+    byte-identical and the push sees "unchanged" instead of committing a new time.
+    Compared after scrubbing: the outbox holds scrubbed content, the fresh payload does not."""
+    try:
+        prev = json.loads(out.read_text())
+    except (OSError, ValueError):
+        return
+    if not isinstance(prev, dict) or "updated_at" not in prev:
+        return
+    strip = lambda d: {k: v for k, v in d.items() if k != "updated_at"}  # noqa: E731
+    if strip(prev) == strip(clean):
+        clean["updated_at"] = prev["updated_at"]
+
+
 # -- git ------------------------------------------------------------------------------------------
 def _token() -> str:
     return os.environ.get("RECALL_SYNC_TOKEN") or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
@@ -244,8 +259,9 @@ def sync_session(home: Path, sid: str, transcript, *, final: bool = False, with_
         return _finish(home, sid, host, "local_only", f"scrubbing uncertain: could not build the payload ({type(e).__name__})", size, None, with_digest)
     if clean is None:
         return _finish(home, sid, host, "local_only", why, size, None, with_digest)
-    data = json.dumps(clean, indent=1)
     out = _outbox(home, host, sid)
+    _reuse_timestamp(clean, out)
+    data = json.dumps(clean, indent=1)
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(data)

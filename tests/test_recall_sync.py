@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -56,6 +57,7 @@ check("payload: carries the friction tally", "events" in pl["friction"], str(pl[
 raw = git(rem, "show", f"inbox/cloud:inbox/testhost/{SID}.json")
 check("payload: neither the token nor the .env value is anywhere in what was pushed", TOKEN not in raw and "abc123def456" not in raw, raw[:200])
 rev1 = git(rem, "rev-parse", "inbox/cloud")
+time.sleep(1.1)  # cross a second boundary: a timestamp alone must never count as "new"
 sync(h, env)
 check("sync: running it again with nothing new adds no commit", git(rem, "rev-parse", "inbox/cloud") == rev1)
 t2 = cc_session(h / "t2.jsonl", 5)
