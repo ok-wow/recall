@@ -184,7 +184,8 @@ def load_entries(include_retired: bool = False) -> list[dict]:
         for e in data or []:
             if not isinstance(e, dict) or not e.get("id"):
                 continue
-            if not _push_channel().entry_is_active(e):
+            active = _push_channel().entry_is_active(e)
+            if not active:
                 inactive += 1
                 if not include_retired:
                     continue
@@ -218,6 +219,10 @@ def load_entries(include_retired: bool = False) -> list[dict]:
                 "recurrences": rec, "raw": e, "text": "\n".join(parts),
                 "probe_when": pw if isinstance(pw, list) else ([pw] if pw else []),
             })
+            if not active:
+                # status is a SKIP_FIELD, so show() would otherwise print
+                # replaced guidance as if it were current.
+                entries[-1]["lifecycle"] = str(e.get("status")).strip().casefold()
     entries.extend(load_rules(broken))
     entries.extend(load_specs(broken))
     entries.extend(load_decisions(broken))
@@ -1209,6 +1214,10 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None,
     if judged is not None:
         line = f"  judged {judged:.2f}" + line
     print(f"\n{head}\n{tag}" + line)
+    if e.get("lifecycle"):
+        nxt = r.get("superseded_by")
+        print(f"  {e['lifecycle'].upper()}" + (f" by {nxt}" if nxt else "")
+              + ": history, not current guidance")
     if e.get("is_lot"):
         print("\n".join(lot_lines(r, full)))
         return
@@ -1809,6 +1818,10 @@ def main() -> int:
                        "pointer": is_pointer(e)}
                 if judged and e["key"] in judged:
                     row["jev"] = round(judged[e["key"]], 3)
+                if e.get("lifecycle"):
+                    row["status"] = e["lifecycle"]
+                    if r.get("superseded_by"):
+                        row["superseded_by"] = r["superseded_by"]
                 rows.append(row)
             print(json.dumps(rows, indent=2))
             return 0
