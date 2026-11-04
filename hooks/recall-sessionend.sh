@@ -191,4 +191,17 @@ cat > "$MARKER_FILE" <<EOF
 }
 EOF
 
+# A one-line receipt, printed only now that the marker exists. The friction hook
+# attaches this session's tally to the marker and (in a cloud container) syncs it;
+# if it cannot run, the claim shrinks to the one thing that is true.
+RECEIPT=""
+FRICTION_HOOK="$SCRIPT_DIR/recall-friction.py"
+if [ -r "$FRICTION_HOOK" ] && command -v python3 >/dev/null 2>&1; then
+    RECEIPT=$(printf '%s' "$INPUT" | python3 -B "$FRICTION_HOOK" --end "$MARKER_FILE" 2>/dev/null || true)
+fi
+if [ -z "$RECEIPT" ]; then
+    RECEIPT="recall: queued session ${SESSION_ID:0:8} for distillation"
+fi
+printf '%s\n' "$RECEIPT"
+
 exit 0

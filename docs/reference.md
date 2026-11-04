@@ -518,6 +518,49 @@ Three that shaped the design:
   once drove the real hook into the real signal log, which made 45% of the published
   retrieval evidence its own fixtures.
 
+## Friction events and visible signals
+
+Recall records friction as it happens, with no model call. `hooks/recall-friction.py`
+runs on PostToolUse (shell tools) and Stop; `scripts/friction_tally.py` reads only the
+transcript lines added since the last call (a per-session cursor in
+`$RECALL_HOME/friction-state/`), in both the Claude Code and Codex schemas. It counts
+failed commands (one event per normalized command; three or more runs with two or more
+failures become one `retry_loop`), user corrections, and named traps. The correction
+phrases and the traps (alembic multiple heads, rebase/merge conflicts, a failing CI check
+after a push, the linter's `agents-reviewed` date rule) are data in
+`scripts/friction_patterns.json`. Events append to `$RECALL_HOME/inbox/events.jsonl`; the
+schema, including the model-judged note kinds, is `scripts/inbox_schema.json`.
+
+At Stop the hook prints at most one line (hook `systemMessage`), only when something new
+or recurring was recorded, using three literal labels: `candidate` (detected, NOT written),
+`queued` (written to the inbox), `synced` (pushed to `inbox/cloud`). `RECALL_SIGNALS=off|quiet|on`
+(default `on`; `quiet` announces recurrences only). `scripts/recall_note.py` lets the model
+record a judged note (`failure, process_failure, decision, success, workflow, guardrail,
+policy`); SessionStart tells it when to. `scripts/recall_retro.py` clusters events by
+signature across sessions: one session is a `candidate`, two make it `confirmed`, and
+`promote` refuses a candidate.
+
+SessionStart opens with what the last sessions kept (`scripts/receipts.py`), read from the
+drain's own diff of the catalogs around each run; SessionEnd prints one line saying what was
+queued. Both stay silent when there is nothing to say.
+
+## Cloud sessions
+
+A cloud container has no durable disk, so `scripts/recall_sync.py` carries the session out:
+at SessionEnd and at a size/time checkpoint it writes a scrubbed digest (`scripts/scrub.py`)
+plus the friction tally and notes to `inbox/<host>/<session-id>.json` on the branch
+`inbox/cloud` of your personal repo, and never to any branch outside `inbox/`. If scrubbing
+is uncertain nothing is written; if the push cannot happen (no remote, no credential,
+unreachable, not confirmed private) the scrubbed payload stays in `$RECALL_HOME/outbox/` and
+the receipt names what was not synced and why. The local drain fetches the branch
+(`scripts/recall_inbox.py`) and queues each session once, tracked by session id; a checkpoint
+whose container went quiet for `RECALL_INBOX_STALE_HOURS` (6) is taken as final.
+
+Set up a container with `scripts/cloud_bootstrap.sh` (plugin install, or hooks from
+`hooks/hooks.json`; safe to run twice). The container needs `RECALL_PERSONAL_REMOTE` and a
+push token in `RECALL_SYNC_TOKEN`. Tested here against a local bare repo only; the GitHub
+privacy check and a real cloud container are not exercised by the suite.
+
 ## Tests
 
 ```bash
