@@ -107,8 +107,6 @@ CONNECTOR_DIR = env_path("RECALL_CONNECTOR_DIR", "OKWOW_CONNECTOR_DIR",
 # Work somebody decided to do later, one JSON file per item, written by
 # park.py. See read_lot.
 LOT_DIR = env_path("RECALL_LOT_DIR", "OKWOW_LOT_DIR", RECALL_HOME / "lot" / "items")
-# A file starting with _ holds workflows or open questions, never a person.
-PEOPLE_DIR = env_path("RECALL_PEOPLE_DIR", "OKWOW_PEOPLE_DIR", RECALL_HOME / "people")
 
 WORD = re.compile(r"[a-z0-9][a-z0-9._/-]*", re.I)
 # Ordinary English that carries no retrieval signal. Deliberately short: BM25's
@@ -228,7 +226,6 @@ def load_entries(include_retired: bool = False) -> list[dict]:
     entries.extend(load_receipts(broken))
     entries.extend(load_orphans(broken))
     entries.extend(load_lot(broken))
-    entries.extend(load_people(broken))
     load_entries.broken = broken
     load_entries.parsed = parsed
     load_entries.inactive = inactive
@@ -1067,185 +1064,6 @@ def load_connectors(broken: list[dict]) -> list[dict]:
     return out
 
 
-# A record older than this is re-checked before work is routed by it.
-PEOPLE_STALE_DAYS = 30
-PEOPLE_SECTIONS = {"deploys": "Deploys", "prompt_releases": "Prompt releases",
-                   "review_norms": "Review and approval norms", "incidents": "Incidents and on call",
-                   "announcements": "Release announcements", "meetings": "Meetings",
-                   "shared_resources": "Shared resources"}
-
-
-def read_people(broken: list[dict]) -> tuple[list[dict], dict, dict]:
-    import yaml            # deferred, as every loader here does
-    people, workflows, questions = [], {}, {}
-    if not PEOPLE_DIR.exists():
-        return people, workflows, questions
-    for f in sorted(PEOPLE_DIR.glob("*.yaml")):
-        try:
-            d = yaml.safe_load(f.read_text())
-            if not isinstance(d, dict) or not str(d.get("name") or d.get("id") or "").strip():
-                raise ValueError("not a people record: it has no name or id")
-        except Exception as exc:
-            broken.append({"catalog": "PEOPLE", "path": str(f), "error": why_broken(exc)})
-            continue
-        d["id"] = str(d.get("id") or f.stem)
-        d["_path"] = str(f)
-        if f.stem == "_workflows":
-            workflows = d
-        elif f.stem == "_open-questions":
-            questions = d
-        elif not f.stem.startswith("_"):
-            people.append(d)
-    return people, workflows, questions
-
-
-def _val(field):
-    """A field is {value, status}; a bare value reads as unconfirmed."""
-    if isinstance(field, dict) and "value" in field:
-        return field.get("value"), str(field.get("status") or "unconfirmed")
-    return field, "unconfirmed"
-
-
-def _flat(v) -> str:
-    if isinstance(v, dict):
-        return " · ".join(f"{k} {x}" for k, x in v.items() if x)
-    if isinstance(v, list):
-        return "; ".join(str(x) for x in v if x)
-    return str(v or "")
-
-
-def load_people(broken: list[dict]) -> list[dict]:
-    """Index who does what, so a question about an area finds its owner."""
-    people, workflows, questions = read_people(broken)
-    out = []
-    for p in people:
-        areas = [a for a in (p.get("areas") or []) if isinstance(a, dict)]
-        text = [p.get("name"), p.get("first_name"), " ".join(p.get("also_known_as") or []),
-                _flat(_val(p.get("handles"))[0]), _flat(_val(p.get("team"))[0]),
-                _flat(_val(p.get("role"))[0]), _flat(_val(p.get("works_on"))[0]),
-                "route to " + _flat(_val(p.get("route_to"))[0]),
-                " ".join(f"{'owns' if a.get('as') == 'primary' else str(a.get('as'))} {a.get('area')}"
-                         for a in areas),
-                " ".join(str(n) for n in (p.get("notes") or [])), str(p.get("kind") or "person")]
-        out.append({"key": f"PEOPLE:{p['id']}", "id": p["id"], "catalog": "PEOPLE",
-                    "recurrences": 0, "probe_when": [], "is_person": True, "raw": p,
-                    "text": "\n".join(str(t) for t in text if t)})
-    for key, title in PEOPLE_SECTIONS.items():
-        claims = [c for c in (workflows.get(key) or []) if isinstance(c, dict)]
-        if not claims:
-            continue
-        raw = {"id": f"workflows:{key}", "kind": "workflow", "name": title, "claims": claims,
-               "last_verified": workflows.get("last_verified"), "_path": workflows.get("_path")}
-        out.append({"key": f"PEOPLE:workflows:{key}", "id": raw["id"], "catalog": "PEOPLE",
-                    "recurrences": 0, "probe_when": [], "is_person": True, "raw": raw,
-                    "text": "\n".join([title, key.replace("_", " ")]
-                                      + [str(c.get("claim") or "") for c in claims])})
-    if questions.get("questions"):
-        raw = {"id": "open-questions", "kind": "open_questions", "name": "Open questions for the owner",
-               "questions": questions["questions"], "last_verified": questions.get("last_verified"),
-               "_path": questions.get("_path")}
-        out.append({"key": "PEOPLE:open-questions", "id": "open-questions", "catalog": "PEOPLE",
-                    "recurrences": 0, "probe_when": [], "is_person": True, "raw": raw,
-                    "text": "\n".join(["open questions owner"] + [str(q) for q in raw["questions"]])})
-    return out
-
-
-def people_age(r: dict) -> int | None:
-    try:
-        seen = datetime.strptime(str(r.get("last_verified"))[:10], "%Y-%m-%d").date()
-    except ValueError:
-        return None
-    return (datetime.now(timezone.utc).date() - seen).days
-
-
-def people_warnings(r: dict) -> list[str]:
-    """What a router must hear before trusting this record."""
-    out = []
-    age = people_age(r)
-    if age is None:
-        out.append("STALE: no last_verified date. Re-check with the owner before routing work.")
-    elif age > PEOPLE_STALE_DAYS:
-        out.append(f"STALE: last verified {str(r.get('last_verified'))[:10]} ({age} days ago). "
-                   "Re-check before routing work.")
-    loose = [k.replace("_", " ") for k in ("handles", "team", "role", "works_on", "route_to")
-             if k in r and _val(r[k])[1] != "confirmed"]
-    if loose:
-        out.append(f"UNCONFIRMED: {', '.join(loose)}. Inferred, not stated by the owner.")
-    return out
-
-
-def person_lines(r: dict, full: bool = False) -> list[str]:
-    mark = lambda status: "" if status == "confirmed" else "  [UNCONFIRMED]"
-    if r.get("kind") == "workflow":
-        out = [f"  {r.get('name')}"]
-        claims = r.get("claims") or []
-        for c in claims if full else claims[:4]:
-            out.append(f"  - {' '.join(str(c.get('claim')).split())}{mark(c.get('status'))}")
-            if full and c.get("sources"):
-                out.append(f"      sources: {'; '.join(str(s) for s in c['sources'])}")
-        if len(claims) > 4 and not full:
-            out.append(f"  … {len(claims) - 4} more (--id {r.get('id')})")
-        out.append(f"  last verified {str(r.get('last_verified'))[:10]} · {r.get('_path')}")
-        return out
-    if r.get("kind") == "open_questions":
-        qs = r.get("questions") or []
-        out = [f"  {r.get('name')} ({len(qs)})"]
-        out += [f"  {i}. {q}" for i, q in enumerate(qs if full else qs[:3], 1)]
-        out.append(f"  {r.get('_path')}")
-        return out
-    team, ts = _val(r.get("team"))
-    out = [f"  {r.get('name')}  ({r.get('kind') or 'person'}"
-           + (f" · {team}" if team else "") + ")" + mark(ts)]
-    out += [f"  ! {w}" for w in people_warnings(r)]
-    for label, key in (("handles", "handles"), ("role", "role"), ("works on", "works_on"),
-                       ("route to", "route_to")):
-        if key in r:
-            v, st = _val(r[key])
-            if v:
-                out.append(f"  {label}: {_flat(v)}{mark(st)}")
-    areas = [a for a in (r.get("areas") or []) if isinstance(a, dict)]
-    if areas:
-        out.append("  areas:")
-        out += [f"    - {a.get('area')} ({a.get('as')}){mark(a.get('status'))}" for a in areas]
-    if r.get("ping_team"):
-        out.append(f"  ping window: team {r['ping_team']} in reviewer_timezones.yaml")
-    if r.get("also_known_as"):
-        out.append(f"  also known as: {', '.join(r['also_known_as'])}")
-    if r.get("dead_handles"):
-        out.append(f"  dead handles, never assign: {'; '.join(r['dead_handles'])}")
-    for n in r.get("notes") or []:
-        out.append(f"  note: {n}")
-    out.append(f"  last verified {str(r.get('last_verified'))[:10]} · confidence {r.get('confidence') or '?'}")
-    if full and r.get("sources"):
-        out.append(f"  sources: {'; '.join(str(s) for s in r['sources'])}")
-    out.append(f"  {r.get('_path')}")
-    return out
-
-
-def _fold(s: str) -> str:
-    import unicodedata
-    # ł has no NFKD decomposition, so "pawel" would never match "Paweł".
-    s = unicodedata.normalize("NFKD", str(s).replace("ł", "l").replace("Ł", "L"))
-    return "".join(c for c in s if not unicodedata.combining(c)).lower().strip().lstrip("@")
-
-
-def person_keys(r: dict) -> set[str]:
-    keys = {r.get("id"), r.get("name"), r.get("first_name"), *(r.get("also_known_as") or [])}
-    handles, _ = _val(r.get("handles"))
-    for h in (handles or {}).values() if isinstance(handles, dict) else []:
-        keys.add(h)
-        if "@" in str(h):
-            keys.add(str(h).split("@")[0])
-    for d in r.get("dead_handles") or []:
-        keys.add(str(d).split()[0])
-    return {_fold(k) for k in keys if k}
-
-
-def find_person(query: str, people: list[dict]) -> list[dict]:
-    q = _fold(query)
-    return [p for p in people if q and q in person_keys(p)] if q else []
-
-
 def bm25(entries: list[dict], query: str, k1: float = 1.5, b: float = 0.75) -> list[tuple[dict, float, list[str]]]:
     q = [t for t in tokenize(query)]
     if not q:
@@ -1371,7 +1189,7 @@ _push_channel.mod = None
 # counted them would move without anything getting harder to reach. One list,
 # so the next source is excluded everywhere at once instead of at four sites.
 NOT_LESSONS = ("is_spec", "is_hub", "is_connector", "is_receipt", "is_orphan", "is_lot",
-               "is_decision", "is_person")
+               "is_decision")
 
 
 def is_pointer(e: dict) -> bool:
@@ -1393,9 +1211,6 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None,
     print(f"\n{head}\n{tag}" + line)
     if e.get("is_lot"):
         print("\n".join(lot_lines(r, full)))
-        return
-    if e.get("is_person"):
-        print("\n".join(person_lines(r, full)))
         return
     if e.get("is_decision"):
         print("\n".join(decision_lines(r, full)))
@@ -1753,43 +1568,6 @@ def _pull_counts() -> dict:
             "abstained_pct": round(100 * abstained / total, 1) if total else 0.0}
 
 
-def person_main(a) -> int:
-    # Exit 1 on no record, so a hook can tell a miss from a match.
-    broken: list[dict] = []
-    people, _, _ = read_people(broken)
-    for b in broken:
-        sys.stderr.write(f"recall: PEOPLE record did not parse and is EXCLUDED — {b['path']}: {b['error']}\n")
-    hits = find_person(a.person, people)
-    if hits:
-        log_pull([({"key": f"PEOPLE:{p['id']}", "id": p["id"], "catalog": "PEOPLE",
-                    "recurrences": 0}, None, []) for p in hits], "recall-person", a.person)
-        if a.json:
-            print(json.dumps([{**{k: v for k, v in p.items() if k != "_path"},
-                               "path": p["_path"], "warnings": people_warnings(p)}
-                              for p in hits], indent=2, ensure_ascii=False, default=str))
-            return 0
-        for p in hits:
-            print("\n" + "\n".join(person_lines(p, full=True)))
-        return 0
-    conn = bm25(load_connectors(broken), a.person)[:min(a.limit, 5)]
-    if a.json:
-        print(json.dumps({"match": None, "connector_hits": [
-            {"id": e["id"], "catalog": e["catalog"], "title": e["raw"].get("title"),
-             "date": e["raw"].get("updated"), "url": e["raw"].get("spec_path")} for e, _, _ in conn]},
-            indent=2, ensure_ascii=False))
-        return 1
-    print(f"  no record yet for '{a.person}'; confirm with the owner before routing")
-    if conn:
-        print(f"  connector mentions ({len(conn)}):")
-        for e, _, _ in conn:
-            r = e["raw"]
-            print(f"    [{e['catalog']}] {r.get('updated') or '?'}  {' '.join(str(r.get('title')).split())[:80]}"
-                  + (f"\n      {r.get('spec_path')}" if r.get("spec_path") else ""))
-    else:
-        print("  no connector mentions either")
-    return 1
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(prog="recall", description="Query the okWOW • Recall corpus.")
     ap.add_argument("query", nargs="*", help="free-text question")
@@ -1819,13 +1597,9 @@ def main() -> int:
                     help="search only connector pointers (Slack, Gmail, meetings)")
     ap.add_argument("--lot", action="store_true",
                     help="the parking lot: list open items, or search only them")
-    ap.add_argument("--person", metavar="NAME_OR_HANDLE",
-                    help="who someone is and what to route to them, by name, first name or handle")
     ap.add_argument("--stats", action="store_true")
     a = ap.parse_args()
 
-    if a.person:
-        return person_main(a)
     entries = load_entries(include_retired=a.include_retired or bool(a.id))
     if a.specs:
         # Asking for specs is asking what they decided, too.
@@ -1877,7 +1651,6 @@ def main() -> int:
             "decision_formats": getattr(load_decisions, "formats", {}),
             "hub_entries": sum(1 for e in entries if e.get("is_hub")),
             "connector_entries": sum(1 for e in entries if e.get("is_connector")),
-            "people_entries": sum(1 for e in entries if e.get("is_person")),
             "connector_sources": sorted({e["catalog"] for e in entries
                                          if e.get("is_connector")}),
             "by_catalog": dict(Counter(e["catalog"] for e in entries)),
