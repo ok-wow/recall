@@ -92,5 +92,15 @@ check("the local side never wrote to the remote", git(rem, "rev-parse", "main") 
 
 runs = drain(root, local, stale="0")
 check("a checkpoint whose container went quiet (stale) is ingested as final", runs == 2 and LIVE in json.loads((s / "inbox" / "consumed.json").read_text()), f"runs={runs}")
+
+c = root / "cloud"
+late_env = env_for(c, RECALL_HOST="cloudbox", RECALL_PERSONAL_REMOTE=str(rem))
+py("recall_note.py", "decision", "the last turns of a long session", "--session", LIVE, "--confidence", "stated", env=late_env)
+py("recall_sync.py", "--session", LIVE, "--transcript", str(t), "--final", env=late_env)
+runs = drain(root, local)
+check("a final file arriving after its stale checkpoint still delivers its new events",
+      any(e.get("kind") == "decision" and e["session_id"] == LIVE and "last turns" in json.dumps(e)
+          for e in jsonl(s / "inbox" / "events.jsonl")))
+check("the late final does not run the worker a second time for that session", runs == 2, f"runs={runs}")
 clean(root)
 sys.exit(finish("inbox ingest checks"))

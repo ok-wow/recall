@@ -7,7 +7,9 @@ Run by the drain before it counts the queue. For every inbox/<host>/<sid>.json o
 the fetched branch it either queues the session or says why not:
 
   - already consumed (tracked by session id in $RECALL_HOME/inbox/consumed.json): skipped,
-    so a session is ingested exactly once however many times the drain runs;
+    so a session is ingested exactly once however many times the drain runs. The one
+    exception: a session consumed from a stale checkpoint takes its final file's new
+    events when that arrives (never a second digest or worker run);
   - a checkpoint ("final": false) younger than RECALL_INBOX_STALE_HOURS (default 6): left
     for the final file, not consumed;
   - malformed, or still holding something shaped like a credential: parked in
@@ -93,7 +95,8 @@ def _ingest_one(home: Path, sid: str, host: str, payload: dict, consumed: dict) 
                   "friction": payload.get("friction") or {}}
         _write(home / "pending" / f"{sid}.json", json.dumps(marker, indent=2))
         queued = True
-    consumed[sid] = {"ingested_at": fe.now_iso(), "host": host, "queued": queued, "events": len(fresh)}
+    consumed[sid] = {"ingested_at": fe.now_iso(), "host": host, "queued": queued, "events": len(fresh),
+                     "from_checkpoint": not payload.get("final")}
     receipts.log(home, "ingested", session_id=sid, host=host, queued=queued, events=len(fresh))
     print(f"inbox: ingested {sid} from {host} ({len(fresh)} event(s), {'queued' if queued else 'no digest to queue'})")
 
@@ -122,9 +125,15 @@ def ingest(home: Path) -> int:
     consumed = _load(cpath)
     for rel in ls.stdout.decode().splitlines():
         m = FILE_RE.match(rel)
-        if not m or m.group(2) in consumed:
+        if not m:
             continue
         host, sid = m.groups()
+        # A stale checkpoint was ingested as if final; the real final may still
+        # arrive and carry the session's last turns, so it gets one more pass
+        # (events only: the digest was already queued and the worker already ran).
+        prior = consumed.get(sid)
+        if prior is not None and not prior.get("from_checkpoint"):
+            continue
         raw = _git(home, "show", f"{ref}:{rel}").stdout.decode(errors="replace")
         try:
             payload = json.loads(raw)
@@ -136,7 +145,7 @@ def ingest(home: Path) -> int:
         if left:
             _quarantine(home, sid, host, "still credential-shaped: " + ", ".join(left), consumed)
             continue
-        if not payload.get("final") and _age_hours(payload.get("updated_at")) < stale:
+        if not payload.get("final") and (prior is not None or _age_hours(payload.get("updated_at")) < stale):
             continue
         _ingest_one(home, sid, host, payload, consumed)
     _write(cpath, json.dumps(consumed, indent=1))
