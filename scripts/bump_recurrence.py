@@ -221,7 +221,14 @@ def main() -> int:
                          "surfaced first — pass --session <id> or write 'session <id>' "
                          "in the note — refusing")
 
-    p = Path(path)
+    p = Path(path).expanduser().resolve()
+    # Share the maintenance transaction lock, including callers using aliases.
+    from maintenance import catalog_lock
+    with catalog_lock(p):
+        return _record_locked(p, eid, note)
+
+
+def _record_locked(p: Path, eid: str, note: str) -> int:
     text = p.read_text()
     before = entries(yaml.load(text, DupCatch))
     patched = bump(text, eid, note)
@@ -246,7 +253,8 @@ def main() -> int:
     if note.split()[-1] not in " ".join(str(after[idx][key]).split()):
         raise SystemExit("note did not round-trip — refusing")
 
-    p.write_text(patched)
+    from maintenance import atomic_write
+    atomic_write(p, patched.encode('utf-8'))
     print(f"ok  {eid}  recurrences {b4} -> {b4 + 1}  {key} written "
           f"({len(note)} chars)")
     sys.path.insert(0, str(Path(__file__).resolve().parent))

@@ -149,7 +149,7 @@ def tokenize(text: str) -> list[str]:
     return out
 
 
-def load_entries() -> list[dict]:
+def load_entries(include_retired: bool = False) -> list[dict]:
     try:
         import yaml
     except ImportError:
@@ -158,6 +158,7 @@ def load_entries() -> list[dict]:
     entries = []
     broken: list[dict] = []
     parsed = 0
+    inactive = 0
     for label, fname in CATALOGS.items():
         path = CATALOG_DIR / fname
         if not path.exists():
@@ -183,6 +184,11 @@ def load_entries() -> list[dict]:
         for e in data or []:
             if not isinstance(e, dict) or not e.get("id"):
                 continue
+            active = _push_channel().entry_is_active(e)
+            if not active:
+                inactive += 1
+                if not include_retired:
+                    continue
             parts = []
 
             def harvest(val, depth=0):
@@ -213,6 +219,10 @@ def load_entries() -> list[dict]:
                 "recurrences": rec, "raw": e, "text": "\n".join(parts),
                 "probe_when": pw if isinstance(pw, list) else ([pw] if pw else []),
             })
+            if not active:
+                # status is a SKIP_FIELD, so show() would otherwise print
+                # replaced guidance as if it were current.
+                entries[-1]["lifecycle"] = str(e.get("status")).strip().casefold()
     entries.extend(load_rules(broken))
     entries.extend(load_specs(broken))
     entries.extend(load_decisions(broken))
@@ -223,6 +233,7 @@ def load_entries() -> list[dict]:
     entries.extend(load_lot(broken))
     load_entries.broken = broken
     load_entries.parsed = parsed
+    load_entries.inactive = inactive
     return entries
 
 
@@ -1203,6 +1214,10 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None,
     if judged is not None:
         line = f"  judged {judged:.2f}" + line
     print(f"\n{head}\n{tag}" + line)
+    if e.get("lifecycle"):
+        nxt = r.get("superseded_by")
+        print(f"  {e['lifecycle'].upper()}" + (f" by {nxt}" if nxt else "")
+              + ": history, not current guidance")
     if e.get("is_lot"):
         print("\n".join(lot_lines(r, full)))
         return
@@ -1566,6 +1581,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(prog="recall", description="Query the okWOW • Recall corpus.")
     ap.add_argument("query", nargs="*", help="free-text question")
     ap.add_argument("--id", help="show one entry by id")
+    ap.add_argument("--include-retired", action="store_true",
+                    help="include retired, superseded, archived and removed catalog history")
     ap.add_argument("-n", "--limit", type=int, default=5)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--full", action="store_true", help="do not truncate bodies")
@@ -1592,7 +1609,7 @@ def main() -> int:
     ap.add_argument("--stats", action="store_true")
     a = ap.parse_args()
 
-    entries = load_entries()
+    entries = load_entries(include_retired=a.include_retired or bool(a.id))
     if a.specs:
         # Asking for specs is asking what they decided, too.
         entries = [e for e in entries if e.get("is_spec") or e.get("is_decision")]
@@ -1626,7 +1643,8 @@ def main() -> int:
         # Rules are not in the injection index by design -- they arrive when
         # their skill fires -- so scoring them here would move a tracked
         # percentage without anything becoming less reachable.
-        cat = [e for e in entries if not e.get("is_rule") and not is_pointer(e)]
+        cat = [e for e in entries if not e.get("is_rule") and not is_pointer(e)
+               and _push_channel().entry_is_active(e["raw"])]
         rules = [e for e in entries if e.get("is_rule")]
         specs = [e for e in entries if e.get("is_spec")]
         unreachable = [e for e in cat if e["key"] not in idx]
@@ -1634,6 +1652,8 @@ def main() -> int:
         out = {
             "entries": len(entries),
             "catalog_entries": len(cat),
+            "inactive_catalog_entries": getattr(load_entries, "inactive", 0),
+            "probe_index_path": str(PROBE_INDEX),
             "rules_entries": len(rules),
             "spec_entries": len(specs),
             "decision_entries": sum(1 for e in entries if e.get("is_decision")),
@@ -1798,6 +1818,10 @@ def main() -> int:
                        "pointer": is_pointer(e)}
                 if judged and e["key"] in judged:
                     row["jev"] = round(judged[e["key"]], 3)
+                if e.get("lifecycle"):
+                    row["status"] = e["lifecycle"]
+                    if r.get("superseded_by"):
+                        row["superseded_by"] = r["superseded_by"]
                 rows.append(row)
             print(json.dumps(rows, indent=2))
             return 0

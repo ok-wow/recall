@@ -19,6 +19,7 @@ Two things this build owes its operator, because nobody watches it run:
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import re
@@ -65,6 +66,13 @@ INDEX_PATH = env_path("RECALL_PROBE_INDEX", "OKWOW_PROBE_INDEX",
 ERROR_MARKER = INDEX_PATH.with_name(INDEX_PATH.name + ".error")
 
 BACKTICK = re.compile(r"`([^`]+)`")
+
+INACTIVE_STATUSES = frozenset({"retired", "superseded", "archived", "removed"})
+
+
+def entry_is_active(entry: dict) -> bool:
+    """Archive explicit lifecycle dispositions without deleting their history."""
+    return str(entry.get("status") or "").strip().casefold() not in INACTIVE_STATUSES
 
 # Tokens that match constantly and mean nothing on their own. A probe that
 # fires on the word "main" fires on every session and teaches the reader to
@@ -346,7 +354,7 @@ class CatalogError(RuntimeError):
     """A catalog could not be read, so this build must not publish anything."""
 
 
-def load_catalog(label: str, path: Path) -> list:
+def load_catalog(label: str, path: Path, fingerprints=None) -> list:
     """Read one catalog, or refuse the whole build.
 
     Both halves of this were live bugs, measured 2026-09-13:
@@ -362,7 +370,11 @@ def load_catalog(label: str, path: Path) -> list:
     if not path.exists():
         raise CatalogError(f"{label}: {path} is missing")
     try:
-        data = yaml.safe_load(path.read_text())
+        raw = path.read_bytes()
+        data = yaml.safe_load(raw)
+        if fingerprints is not None:
+            fingerprints[label] = {"path": str(path), "mtime": int(path.stat().st_mtime),
+                                   "sha256": hashlib.sha256(raw).hexdigest()}
     except Exception as exc:                      # YAMLError, UnicodeDecodeError, OSError
         first = " ".join(str(exc).split())[:200]
         raise CatalogError(f"{label}: {path} did not parse: {first}") from exc
@@ -380,6 +392,7 @@ def load_catalog(label: str, path: Path) -> list:
 
 
 def build() -> dict:
+    fingerprints = {}
     entries: dict[str, dict] = {}
     postings: dict[str, list[str]] = {}
     specific_tokens: set[str] = set()
@@ -389,6 +402,7 @@ def build() -> dict:
     # only reason that went unnoticed for months is that the build printed a
     # success count and nothing else.
     dropped: dict[str, int] = {
+        "inactive": 0,
         "no_id": 0,
         "no_probe_when": 0,
         "no_backticked_token": 0,
@@ -405,7 +419,7 @@ def build() -> dict:
             examples[reason].append(eid)
 
     for label, path in CATALOGS.items():
-        data = load_catalog(label, path)
+        data = load_catalog(label, path, fingerprints)
         if not data:
             empty_catalogs.append(label)
         for entry in data:
@@ -414,6 +428,9 @@ def build() -> dict:
                 drop("not_a_mapping", None)
                 continue
             eid = entry.get("id")
+            if not entry_is_active(entry):
+                drop("inactive", eid)
+                continue
             pw = entry.get("probe_when")
             if not eid:
                 drop("no_id", None)
@@ -477,10 +494,7 @@ def build() -> dict:
     return {
         "version": 1,
         "built_at": __import__("datetime").datetime.now().astimezone().isoformat(timespec="seconds"),
-        "sources": {
-            label: {"path": str(p), "mtime": int(p.stat().st_mtime) if p.exists() else 0}
-            for label, p in CATALOGS.items()
-        },
+        "sources": fingerprints,
         "specific_tokens": sorted(specific_tokens),
         "entries": entries,
         "postings": postings,
@@ -490,30 +504,35 @@ def build() -> dict:
 
 
 def write_index(index: dict) -> None:
-    """Unique temp file, fsync, atomic rename.
+    """Serialize publication and reject snapshots whose source bytes changed."""
+    import fcntl
+    target = INDEX_PATH.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with Path(str(target) + '.build.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for source in index.get('sources', {}).values():
+            expected = source.get('sha256')
+            if expected:
+                try:
+                    actual = hashlib.sha256(Path(source['path']).read_bytes()).hexdigest()
+                except OSError as exc:
+                    raise CatalogError('catalog unavailable during index publication') from exc
+                if actual != expected:
+                    raise CatalogError('catalog changed during index build; retry with fresh sources')
+        _write_index_locked(index, target)
 
-    The old code wrote a FIXED `<index>.json.tmp`. Two rebuilds can race --
-    SessionStart fires one in the background on every new session, so two
-    sessions opening together collide, as does a manual foreground rebuild
-    racing a backgrounded one -- and interleaved writes into a single shared
-    temp file get published by os.replace as whatever mixture was on disk.
-    (An earlier version of this comment also claimed the drain rebuilds after
-    each distillation. It does not: SessionStart is the only caller in the
-    tree. The race above is real on its own, but the comment is the record of
-    WHY this guard exists, so it may not carry a mechanism that does not.) A corrupt index is not a degraded index: the injector's load_index()
-    swallows the JSONDecodeError and returns None, so retrieval stops
-    completely, permanently and silently.
-    """
-    INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+def _write_index_locked(index: dict, target: Path) -> None:
+    """Publish a complete index through a unique, synced temporary file."""
     fd, tmp = tempfile.mkstemp(
-        dir=str(INDEX_PATH.parent), prefix=INDEX_PATH.name + ".", suffix=".tmp")
+        dir=str(target.parent), prefix=target.name + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as fh:
             json.dump(index, fh, separators=(",", ":"))
             fh.flush()
             os.fsync(fh.fileno())          # rename must not publish an empty file
         os.chmod(tmp, 0o644)               # mkstemp is 0600; the index is not a secret
-        os.replace(tmp, INDEX_PATH)        # same directory, so this is atomic
+        os.replace(tmp, target)            # preserve aliases to the shared index
     except BaseException:
         try:
             os.unlink(tmp)
@@ -545,6 +564,7 @@ def report(index: dict) -> str:
             f"dropped {d['dropped_total']} of {d['entries_seen']} entries ({pct:.1f}%) "
             f"— auto-injection cannot see them:")
         for reason, label in (
+            ("inactive", "intentionally inactive (history retained)"),
             ("no_backticked_token", "probe_when has no backticked token"),
             ("all_tokens_filtered", "every backticked token was filtered (stopword/short/furniture)"),
             ("no_probe_when", "no probe_when field"),
@@ -555,7 +575,7 @@ def report(index: dict) -> str:
             if n:
                 eg = d["dropped_examples"][reason]
                 lines.append(f"  {n:5}  {label}" + (f"   e.g. {eg[0]}" if eg else ""))
-        lines.append("  recall.py reaches all of them; only auto-injection is limited.")
+        lines.append("  Other omitted entries remain searchable; --id and --include-retired expose inactive history.")
     if d["entries_without_summary"]:
         lines.append(
             f"WARNING: {d['entries_without_summary']} indexed entries have no summary — "
@@ -576,7 +596,13 @@ def main() -> int:
         set_error_marker(reason)
         sys.stderr.write(reason + "\n")
         return 2
-    write_index(index)
+    try:
+        write_index(index)
+    except CatalogError as exc:
+        # A newer source won the race; the catalog is fine, so no error marker.
+        sys.stderr.write(f"build_probe_index: did not publish {INDEX_PATH} — {exc}. "
+                         "The previous index is left in place.\n")
+        return 2
     set_error_marker(None)
     print(report(index))
     return 0

@@ -109,6 +109,16 @@ def normalize(text, max_iter=500):
 
 
 def process(path, apply):
+    if apply:
+        from pathlib import Path
+        from maintenance import catalog_lock
+        target = Path(path).expanduser().resolve()
+        with catalog_lock(target):
+            return _process(str(target), True)
+    return _process(path, False)
+
+
+def _process(path, apply):
     text = open(path).read()
     try:
         yaml.safe_load(text)
@@ -130,7 +140,8 @@ def process(path, apply):
     if apply:
         ts = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
         shutil.copy(path, f"{path}.bak-{ts}")
-        open(path, 'w').write(new_text if new_text.endswith('\n') else new_text + '\n')
+        from maintenance import atomic_write
+        atomic_write(path, (new_text if new_text.endswith('\n') else new_text + '\n').encode('utf-8'))
         print(f"  ✓ {path}: FIXED {diffs} scalar(s) in {iters} pass(es); backup .bak-{ts}")
     else:
         print(f"  ! {path}: NOT strict — would quote-fix {diffs} scalar(s) in {iters} pass(es). Re-run with --apply.")

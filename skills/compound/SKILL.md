@@ -368,6 +368,56 @@ Report a failed write. Do not report a capture for a failed write.
 
 ---
 
+## Maintain existing lessons
+
+Use `maintenance.py` to rewrite, merge, keep or retire a lesson that exists. It
+writes only `FAILURE_MODES.yaml` and `PROCESS_FAILURES.yaml`.
+
+List the lessons that need a review:
+
+```bash
+python3 "${RECALL_SKILL_DIR:-${CLAUDE_SKILL_DIR}/../../scripts}/maintenance.py" scan --limit 3
+```
+
+Write a plan for those candidates. Get a review file from a reviewer who is not
+the plan's author. The review sets `approved` to true. It records the sha256 of
+the exact plan bytes.
+
+Run `apply` without `--apply` first:
+
+```bash
+python3 "${RECALL_SKILL_DIR:-${CLAUDE_SKILL_DIR}/../../scripts}/maintenance.py" apply --plan <plan.json> --review <review.json>
+```
+
+That run is a dry run. It changes nothing.
+
+Add `--apply` only for a plan that you reviewed exactly as it is on disk. Do
+not edit a plan after its review. Write a new plan and get a new review.
+
+Record the result of a lesson after an agent used it:
+
+```bash
+python3 "${RECALL_SKILL_DIR:-${CLAUDE_SKILL_DIR}/../../scripts}/maintenance.py" outcome --file <outcome.json>
+```
+
+The outcome file names an `author` and a different `verifier`.
+
+`maintenance_tick.py` runs the same review on a schedule. The tick does nothing
+until `$RECALL_HOME/maintenance/config.json` exists with `"enabled": true`.
+
+> **Why the dry run and the hash:** a rewrite replaces guidance that later
+> sessions are shown, so the change that lands must be the change somebody
+> read. The engine refuses a review whose hash does not match the plan bytes,
+> and it refuses a catalog that changed after the plan was written. A retired
+> lesson keeps its history: `recall.py --id` and `--include-retired` still show
+> it, marked as retired.
+>
+> **Why the tick is off:** it starts model workers and rewrites catalogs
+> without anyone watching. Nothing turns it on except a config file the owner
+> writes by hand.
+
+---
+
 ## When nothing qualifies
 
 Write nothing. Exit with status 0.

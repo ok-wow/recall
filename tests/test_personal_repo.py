@@ -186,6 +186,37 @@ finally:
     w.close()
 
 
+# ---------------------------------------- maintenance working files stay out --
+# A tick copies catalog entries and evidence file text into maintenance/runs/.
+w = World()
+try:
+    run_dir = w.store / "maintenance" / "runs" / "r1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "request.json").write_text('{"evidence": "text from another repo"}\n')
+    w.run("init", "--apply")
+    tracked = set(w.git("ls-files").stdout.split())
+    check("a fresh store leaves maintenance runs out",
+          "maintenance/runs/r1/request.json" not in tracked, sorted(tracked))
+finally:
+    w.close()
+
+w = World()
+try:
+    # A store made before maintenance existed keeps its old .gitignore.
+    (w.store / ".gitignore").write_text("drain-credentials\n")
+    run_dir = w.store / "maintenance" / "runs" / "r1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "request.json").write_text("{}\n")
+    p = w.run("init", "--apply")
+    check("an existing store gains the maintenance line",
+          "maintenance/" in (w.store / ".gitignore").read_text().splitlines(), p.stdout + p.stderr)
+    tracked = set(w.git("ls-files").stdout.split())
+    check("an existing store leaves maintenance runs out",
+          "maintenance/runs/r1/request.json" not in tracked, sorted(tracked))
+finally:
+    w.close()
+
+
 # ------------------------------------------------------------ remote refusals --
 def remote_case(label: str, repo: dict | None, login: str | None, want_ok: bool, needle: str,
                 url: str = "git@github.com:{owner}/recall-personal.git", gh: str | None = None) -> None:
