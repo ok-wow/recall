@@ -29,7 +29,7 @@ def cloud_sync(root: Path, rem: Path, sid: str, final: bool, transcript: Path):
 
 
 def push_raw(root: Path, rem: Path, rel: str, text: str):
-    w = root / "rawclone"
+    w = root / ("rawclone-" + Path(rel).stem)
     subprocess.run(["git", "clone", "-q", "-b", "inbox/cloud", str(rem), str(w)], check=True, capture_output=True)
     (w / rel).parent.mkdir(parents=True, exist_ok=True)
     (w / rel).write_text(text)

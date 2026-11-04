@@ -80,7 +80,8 @@ for b in ("main", "master"):
     p = sync(h, env_for(h, RECALL_PERSONAL_REMOTE=str(rem)), "--branch", b)
     check(f"--branch {b}: refused and says so", "refused" in p.stdout and "recall: synced" not in p.stdout, p.stdout)
 check("...and main did not move, nor did any branch appear",
-      git(rem, "rev-parse", "main") == main_before and git(rem, "branch", "--list").split() == ["main"], git(rem, "branch", "--list"))
+      git(rem, "rev-parse", "main") == main_before
+      and git(rem, "for-each-ref", "--format=%(refname:short)", "refs/heads").split() == ["main"], git(rem, "branch", "--list"))
 clean(h)
 
 # -- degrade: nothing durable, nothing lost silently --------------------------------------------------------------------------

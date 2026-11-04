@@ -17,6 +17,7 @@ SECRET = "gh" + "p_" + "Ab3dE6gH9jK2mN5pQ8sT1vW4yZ7cF0hJ3kL6"
 def boot(home: Path, **extra):
     e = env_for(home, **extra)
     e.pop("RECALL_HOME", None)
+    e.pop("RECALL_HOST_DIR", None)
     e.update({k: v for k, v in extra.items()})
     return run(["bash", str(BOOT)], e)
 
