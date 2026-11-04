@@ -76,6 +76,9 @@ drain-attempts/
 auth-down.json
 yaml-broken.json
 catalog-dirty.json
+# Maintenance runs copy catalog entries and the text of evidence files from
+# other repos, and grow by one folder per tick.
+maintenance/
 """
 
 # A last check before a commit, on what is actually staged. .gitignore is the
