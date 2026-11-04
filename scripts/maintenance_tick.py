@@ -75,8 +75,10 @@ def config_load():
 
 
 def capture_busy(cfg):
+    # hooks/recall-drain.sh writes its pid into the drain.lock directory it holds;
+    # a dead pid there is a stale lock the next drain reaps.
     paths = [cfg['capture_drain_pid_path']] if cfg.get('capture_drain_pid_path') else [
-        engine.home() / 'lot' / 'drain.pid', engine.home() / 'maintenance' / 'capture-drain.pid']
+        engine.home() / 'drain.lock' / 'pid']
     for path in paths:
         try:
             pid = int(Path(path).expanduser().read_text().strip())

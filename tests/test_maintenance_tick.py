@@ -93,6 +93,17 @@ class TickTest(unittest.TestCase):
         self.config['capture_drain_pid_path'] = str(pid); self.save()
         self.assertEqual(self.run_tick()['state'], 'applied')
 
+    def test_default_guard_reads_the_drain_lock_pid(self):
+        # hooks/recall-drain.sh holds $RECALL_HOME/drain.lock and writes its pid there.
+        lock = self.home / 'drain.lock'; lock.mkdir()
+        (lock / 'pid').write_text(f'{os.getpid()}\n')
+        self.assertTrue(tick.capture_busy({}))
+        self.assertEqual(self.run_tick()['state'], 'capture_busy')
+        self.assertNotIn('fixed remedy', self.catalog.read_text())
+        (lock / 'pid').write_text('999999999\n')
+        self.assertFalse(tick.capture_busy({}))
+        self.assertEqual(self.run_tick()['state'], 'applied')
+
     def test_recursion_guard(self):
         with mock.patch.dict(os.environ, {'RECALL_MAINTENANCE_WORKER': '1'}):
             self.assertEqual(self.run_tick()['state'], 'worker_recursion')
