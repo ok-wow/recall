@@ -84,7 +84,11 @@ def market_problems(d: dict, plugin_name: str) -> list[str]:
 
 
 def hook_wiring(d: dict, root: Path) -> tuple[dict, list[str]]:
-    """{event: (script path relative to the plugin root, timeout)} plus problems."""
+    """{event: {(script path relative to the plugin root, timeout)}} plus problems.
+
+    A set per event: PostToolUse runs two hooks, and a dict holding one value
+    per event compared only whichever was registered last.
+    """
     wiring, out = {}, []
     for event, groups in (d.get("hooks") or {}).items():
         for g in groups or []:
@@ -101,7 +105,7 @@ def hook_wiring(d: dict, root: Path) -> tuple[dict, list[str]]:
                     out.append(f"{event}: {rel} is run with {interp}")
                 if not (root / rel).is_file():
                     out.append(f"{event}: {rel} does not exist in the repo")
-                wiring[event] = (rel, h.get("timeout"))
+                wiring.setdefault(event, set()).add((rel, h.get("timeout")))
     return wiring, out
 
 
@@ -126,7 +130,7 @@ def installer_wiring() -> dict:
         for event, groups in (d.get("hooks") or {}).items():
             for g in groups:
                 for h in g.get("hooks", []):
-                    out[event] = (os.path.relpath(h["command"], REPO), h.get("timeout"))
+                    out.setdefault(event, set()).add((os.path.relpath(h["command"], REPO), h.get("timeout")))
         return out
     finally:
         shutil.rmtree(home, ignore_errors=True)
@@ -191,9 +195,9 @@ check("control: exec form is caught", any("uses args" in p for p in _bad_problem
 check("control: an unquoted placeholder is caught", any("not in the form" in p for p in _bad_problems))
 check("control: the wrong interpreter is caught", any("is run with python3" in p for p in _bad_problems))
 check("control: a missing event is caught",
-      wiring_problems({}, {"PreCompact": ("hooks/x.py", 10)}) == ["install.sh wires PreCompact, hooks.json does not"])
+      wiring_problems({}, {"PreCompact": {("hooks/x.py", 10)}}) == ["install.sh wires PreCompact, hooks.json does not"])
 check("control: a different timeout is caught",
-      bool(wiring_problems({"SessionEnd": ("hooks/a.sh", 5)}, {"SessionEnd": ("hooks/a.sh", 10)})))
+      bool(wiring_problems({"SessionEnd": {("hooks/a.sh", 5)}}, {"SessionEnd": {("hooks/a.sh", 10)}})))
 
 TOTAL = 6 + len(installed) + 7
 if fails:

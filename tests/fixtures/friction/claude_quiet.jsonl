@@ -1,0 +1,9 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "let's proceed"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "q1", "name": "Bash", "input": {"command": "alembic upgrade head"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q1", "content": "INFO  [alembic.runtime.migration] Running upgrade a -> b"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "q2", "name": "Bash", "input": {"command": "grep -rn CONFLICT docs/"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q2", "content": "docs/x.md:3:CONFLICT (content) is what git prints"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "q3", "name": "Bash", "input": {"command": "gh pr checks 12"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q3", "content": "ci-python\tpass\t1m\thttps://x/y"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "I'll try again as I said earlier"}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q4", "content": "please retry again"}]}}
