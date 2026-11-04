@@ -1,0 +1,8 @@
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "Please fix it again"}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "as I said, never push to main"}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "I already told you the db name"}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "we agreed to use jsonl"}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "you keep doing that"}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "you keep doing it"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Trying again as I said"}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "z1", "content": "retry again"}]}}

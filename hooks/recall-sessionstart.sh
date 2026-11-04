@@ -74,6 +74,28 @@ PYEOF
     fi
 fi
 
+# --- visible receipts and the capture nudge ---------------------------------
+# First thing in the context: what the last sessions kept, read from the drain's
+# own receipts. receipts.py prints nothing when there is nothing to say, and it
+# only names entries it saw appear. The session id arrives on stdin; `read -t`
+# so a host that sends none cannot hang the hook.
+SESSION_INPUT=""
+IFS= read -r -t 2 -d '' SESSION_INPUT 2>/dev/null || true
+START_SID=$(printf '%s' "$SESSION_INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)
+if [ -r "$RECALL_SKILL_DIR/receipts.py" ] && command -v python3 >/dev/null 2>&1; then
+    RECEIPT_BLOCK=$(python3 -B "$RECALL_SKILL_DIR/receipts.py" summary 2>/dev/null || true)
+    if [ -n "$RECEIPT_BLOCK" ]; then printf '%s\n' "$RECEIPT_BLOCK"; fi
+fi
+if [ "${RECALL_SIGNALS:-on}" != "off" ] && [ -r "$RECALL_SKILL_DIR/recall_note.py" ]; then
+    NOTE_CLI=$(CDPATH= cd -P "$RECALL_SKILL_DIR" 2>/dev/null && pwd -P) || NOTE_CLI="$RECALL_SKILL_DIR"
+    cat <<EOF
+recall: when a fix was verified, a decision with a rejected alternative was made, or the user corrected the same thing twice, record it:
+  python3 ${NOTE_CLI}/recall_note.py <kind> "<one line>" --evidence <file:line> --confidence <candidate|verified|stated> --session ${START_SID:-<session-id>}
+  kind: failure, process_failure, decision, success, workflow, guardrail, policy. Then say so to the user in one line.
+EOF
+fi
+# --- end receipts -------------------------------------------------------------
+
 # Surface a SessionEnd safe_load-sweep break (v0.3.1), once, then clear it.
 BROKEN_MARKER="$RECALL_HOME/yaml-broken.json"
 if [ -f "$BROKEN_MARKER" ]; then
