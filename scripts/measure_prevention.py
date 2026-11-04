@@ -112,6 +112,9 @@ def load_fires() -> dict[str, list[str]]:
             continue
         if TEST_SESSION.match(str(r.get("session", ""))):
             continue
+        # The control arm: chosen to inject, deliberately not shown.
+        if r.get("held_back"):
+            continue
         entry, ts = str(r.get("entry", "")), str(r.get("ts", ""))[:10]
         if entry and ts:
             fires.setdefault(entry, []).append(ts)

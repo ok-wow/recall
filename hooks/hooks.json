@@ -1,5 +1,5 @@
 {
-  "description": "Recall: the same five hooks install.sh registers, run from the plugin folder.",
+  "description": "Recall: the hooks install.sh registers, run from the plugin folder.",
   "hooks": {
     "SessionEnd": [
       {
@@ -43,6 +43,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/recall-friction.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -51,6 +60,17 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/recall-compaction-witness.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/recall-friction.py\"",
             "timeout": 10
           }
         ]

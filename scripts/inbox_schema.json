@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "types": ["failed_command", "retry_loop", "user_correction", "named_pattern", "note"],
+  "note_kinds": ["failure", "process_failure", "decision", "success", "workflow", "guardrail", "policy"],
+  "confidence": ["candidate", "verified", "stated"],
+  "required": ["type", "signature", "count", "session_id", "host", "ts"]
+}

@@ -207,6 +207,9 @@ WIRING = [
     # Both hosts fire PreCompact with a `trigger` field. This was Claude-only
     # while Codex had no such event; its hooks docs now list it.
     ("PreCompact",       f"{repo}/hooks/recall-compaction-witness.py"),
+    # Live friction capture: records as tools run, and says one line at Stop.
+    ("PostToolUse",      f"{repo}/hooks/recall-friction.py"),
+    ("Stop",             f"{repo}/hooks/recall-friction.py"),
 ]
 added = 0
 for event, cmd in WIRING:

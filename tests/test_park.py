@@ -64,7 +64,8 @@ def park_json(d: Path, *args: str, stdin: str | None = None, env: dict | None = 
 def item(iid: str, **kw) -> dict:
     """A whole item, as park.py writes one. The fields are the contract."""
     base = {"id": iid, "title": iid.replace("-", " "), "body": "", "first_move": None,
-            "theme": "other", "tier": None, "status": "parked", "owner_said": False,
+            "theme": "other", "tier": None, "lane": None, "effort": None,
+            "status": "parked", "owner_said": False,
             "source": {"session_id": None, "kind": "session", "ref": None, "quote": None},
             "links": {"linear": None, "prs": [], "spec": None}, "revisit_when": [],
             "created": "2026-09-01T00:00:00Z", "last_touched": "2026-09-01T00:00:00Z",
@@ -496,6 +497,60 @@ def main() -> int:
     check("a failed write leaves the old file byte for byte", target.read_bytes() == before)
     left = [p.name for p in (d / "lot").iterdir() if p.name not in (target.name, ".lock")]
     check("a failed write leaves no temp file", not left, str(left))
+
+    # -- lane and effort: what a runner or a board selects and sorts by --------
+    d = root / "lanes"
+    rc, a1 = park_json(d, "add", "--title", "retry the slack sync", "--tier", "2",
+                       "--lane", "overnight", "--effort", "S")
+    check("add stores lane and effort", rc == 0 and a1["lane"] == "overnight" and a1["effort"] == "S",
+          str(a1)[:200])
+    rc, a2 = park_json(d, "add", "--title", "canvas zoom jitter", "--tier", "3")
+    check("an item added without them has both empty", rc == 0 and a2["lane"] is None
+          and a2["effort"] is None, str(a2)[:200])
+    rc, out = park(d, "add", "--title", "deck font fallback", "--lane", "tonight")
+    check("an unknown lane is refused", rc == 2, f"rc={rc}")
+    rc, out = park(d, "add", "--title", "deck font fallback", "--effort", "XL")
+    check("an unknown effort is refused", rc == 2, f"rc={rc}")
+    rc, a2 = park_json(d, "set", a2["id"], "--lane", "spec", "--effort", "L")
+    check("set changes lane and effort and says so in history",
+          rc == 0 and a2["lane"] == "spec" and a2["effort"] == "L"
+          and "lane none -> spec" in a2["history"][-1]["change"], str(a2)[:300])
+    rc, a3 = park_json(d, "add", "--title", "router prompt eval drift", "--tier", "2",
+                       "--lane", "owner", "--effort", "M")
+    rc, rows = park_json(d, "list", "--lane", "spec")
+    check("list --lane filters", [r["id"] for r in rows] == [a2["id"]], str(rows)[:200])
+    rc, rows = park_json(d, "list", "--effort", "M")
+    check("list --effort filters", [r["id"] for r in rows] == [a3["id"]], str(rows)[:200])
+    rc, rows = park_json(d, "list", "--sort", "effort")
+    check("list --sort effort runs S, M, L",
+          [r["id"] for r in rows] == [a1["id"], a3["id"], a2["id"]], str([r["id"] for r in rows]))
+    rc, rows = park_json(d, "list", "--sort", "lane")
+    check("list --sort lane runs overnight, owner, spec",
+          [r["id"] for r in rows] == [a1["id"], a3["id"], a2["id"]], str([r["id"] for r in rows]))
+    rc, rows = park_json(d, "list")
+    check("the default order is still tier", [r["id"] for r in rows][-1] == a2["id"])
+    rc, out = park(d, "list")
+    check("the list table has lane and effort columns",
+          rc == 0 and "lane" in out.splitlines()[0] and "effort" in out.splitlines()[0]
+          and "overnight" in out, out[:300])
+    rc, out = park(d, "show", a2["id"])
+    check("show prints lane and effort", rc == 0 and "lane spec" in out and "effort L" in out, out[:300])
+    # An item written before these fields existed, and keys this version does
+    # not know, both survive a rewrite by set and done.
+    old = item("old-shape-item", future_field={"keep": True})
+    del old["lane"], old["effort"]
+    write(d / "lot", old)
+    rc, it = park_json(d, "set", "old-shape-item", "--lane", "owner")
+    rc, it = park_json(d, "done", "old-shape-item")
+    stored = json.loads((d / "lot" / "old-shape-item.json").read_text())
+    check("set and done keep keys they do not know",
+          stored.get("future_field") == {"keep": True} and stored.get("lane") == "owner", str(stored)[:300])
+    imp = d / "lanes.jsonl"
+    imp.write_text(json.dumps({"title": "warm the embedding cache", "lane": "overnight", "effort": "M"})
+                   + "\n" + json.dumps({"title": "bad lane line", "lane": "someday"}) + "\n")
+    rc, res = park_json(d, "import", str(imp))
+    check("import takes lane and effort and rejects a bad lane",
+          rc == 1 and res["added"] == 1 and res["rejected"] == 1, str(res)[:300])
 
     # -- the real store is never the default in a test -------------------------
     d = root / "paths"

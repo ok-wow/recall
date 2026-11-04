@@ -230,6 +230,17 @@ digest_marker() {
 }
 count_pending() { ls "$PENDING_DIR" 2>/dev/null | wc -l | tr -d ' '; }
 
+# What a drain run actually added to the catalogs is recorded per session, as a
+# diff of the catalog ids around the worker. SessionStart reads it back, so the
+# receipt can only name entries that appeared during that run.
+RECEIPTS_PY="$SKILL_DIR/receipts.py"
+BEFORE_SNAPSHOT="$LOCK_DIR/catalog-before.json"
+note_distilled() {
+  [ -r "$RECEIPTS_PY" ] || return 0
+  python3 -B "$RECEIPTS_PY" distilled "$1" "$BEFORE_SNAPSHOT" >> "$LOG" 2>&1 || true
+  rm -f "$BEFORE_SNAPSHOT"
+}
+
 # A digest is a derived artifact with exactly one consumer: the worker draining
 # the marker that points at it. Nothing ever removed them, so the directory grew
 # by one file per oversized session forever. Reap by age, but never a digest a
@@ -280,6 +291,15 @@ oldest_marker() {
 # Deliberately ABOVE the empty-queue exit below. Steady state is an empty queue,
 # so housekeeping placed after that guard would never run on the common path.
 reap_digests
+
+# Cloud sessions arrive as files on the inbox/cloud branch of the personal repo.
+# Ingest turns each into a pending marker exactly once, so it must run BEFORE the
+# queue is counted, and above the empty-queue exit for the same reason as the
+# reaper. A failure here costs this tick nothing else.
+INBOX_INGEST="$SKILL_DIR/recall_inbox.py"
+if [ -r "$INBOX_INGEST" ] && command -v python3 >/dev/null 2>&1; then
+  python3 -B "$INBOX_INGEST" ingest >> "$LOG" 2>&1 || log "inbox: ingest failed (non-fatal)"
+fi
 
 PENDING=$(count_pending)
 [ "$PENDING" -eq 0 ] && exit 0
@@ -356,6 +376,8 @@ while :; do
   # force-push, delete, reset --hard, merge, publish. A blocked step fails safe:
   # the marker stays queued, and human PR/merge ratification is untouched.
   RUNLOG=$(mktemp "${TMPDIR:-/tmp}/recall-drain.XXXXXX")
+  rm -f "$BEFORE_SNAPSHOT"
+  if [ -r "$RECEIPTS_PY" ]; then python3 -B "$RECEIPTS_PY" snapshot > "$BEFORE_SNAPSHOT" 2>/dev/null || rm -f "$BEFORE_SNAPSHOT"; fi
   RECALL_WORKER=1 RECALL_SKILL_DIR="$SKILL_DIR" "$AGENT_PATH" \
     -p "/compound $SESSION" \
     --model "$MODEL" \
@@ -389,6 +411,7 @@ while :; do
     # The worker cleared its own marker. Still record the verdict -- the ledger
     # is what SessionEnd consults to avoid re-enqueueing this session later.
     record_processed "$SESSION" "cleared-by-worker" "$RUNLOG"
+    note_distilled "$SESSION"
     rm -f "$ATTEMPTS_DIR/$SESSION" "$RUNLOG" "$AUTH_DOWN_MARKER" 2>/dev/null
   fi
   if [ "$AFTER" -ge "$REMAINING" ]; then
@@ -436,6 +459,7 @@ while :; do
     # processes" for three months and the skill did not.
     if [ "$TIMED_OUT" -eq 0 ] && [ "$CHILD_RC" -eq 0 ]; then
       if record_processed "$SESSION" "completed-marker-cleared-by-drain" "$RUNLOG"; then
+        note_distilled "$SESSION"
         rm -f "$PENDING_DIR/$MARKER" "$ATTEMPTS_DIR/$SESSION" "$RUNLOG" "$AUTH_DOWN_MARKER" 2>/dev/null
         log "processed $SESSION — worker completed, verdict recorded, marker cleared by drain"
         DRAINED=$((DRAINED + 1))

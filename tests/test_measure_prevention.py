@@ -112,6 +112,21 @@ def main() -> int:
     check("a test-harness fire is not production delivery",
           v.get("never-surfaced") == 1 and not v.get("surfaced-then-recurred"), str(v))
 
+    # --- a held-back fire is the control arm, never delivery --------------------
+    d = tmp / "heldback"
+    build(d, {"FAILURE_MODES": [
+        {"id": "held-back-lesson", "recurrences": 1, "recurrence_2026_09_14": "again"},
+    ]}, [
+        {"ts": "2026-09-13T10:00:00Z", "session": "s1", "entry": "FM:held-back-lesson",
+         "held_back": True},
+        {"ts": "2026-09-13T10:00:00Z", "session": "cli", "entry": "FM:something-else"},
+        {"ts": "2026-09-15T10:00:00Z", "session": "cli", "entry": "FM:something-else"},
+    ])
+    rc, out = run(d, "--json")
+    v = out["summary"]["verdicts"] if isinstance(out, dict) else {}
+    check("a held-back fire is not delivery",
+          v.get("never-surfaced") == 1 and not v.get("surfaced-then-recurred"), str(v))
+
     # --- the unmeasurable bucket is reported, not dropped ---------------------
     d = tmp / "undated"
     build(d, {"FAILURE_MODES": [{"id": "bare-counter", "recurrences": 4}]},

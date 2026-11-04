@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "corrections": [
+    {"id": "again", "regex": "\\bagain\\b"},
+    {"id": "as-i-said", "regex": "\\bas i (already )?said\\b"},
+    {"id": "already-told-you", "regex": "\\bi already (told|said|mentioned)\\b"},
+    {"id": "we-agreed", "regex": "\\bwe (already )?agreed\\b"},
+    {"id": "you-keep-doing", "regex": "\\byou keep (doing|making|forgetting|using|getting)\\b"}
+  ],
+  "named": [
+    {
+      "id": "alembic-multiple-heads",
+      "source": "tool_output",
+      "when_command": "\\balembic\\b",
+      "regex": "[Mm]ultiple head revisions are present|[Mm]ultiple heads"
+    },
+    {
+      "id": "git-conflict",
+      "source": "tool_output",
+      "when_command": "\\bgit\\b[^|;&]*\\b(rebase|merge|pull|cherry-pick|stash|checkout)\\b",
+      "regex": "CONFLICT \\(|Automatic merge failed|could not apply"
+    },
+    {
+      "id": "ci-check-failed",
+      "source": "tool_output",
+      "after_command": "\\bgit\\b[^|;&]*\\bpush\\b",
+      "when_command": "\\bgh\\b[^|;&]*\\b(pr|run)\\b[^|;&]*\\b(checks?|view|watch)\\b",
+      "regex": "(?m)^(?P<name>[^\\t\\n]+)\\t(?:fail|failure)\\b",
+      "signature": "ci-check-failed:{name}"
+    },
+    {
+      "id": "linter-agents-reviewed-date",
+      "source": "tool_output",
+      "regex": "agents-reviewed[^\\n]*(older|stale|behind|bump|mismatch|out of date|must be)|bump the [^\\n]*-reviewed"
+    }
+  ]
+}

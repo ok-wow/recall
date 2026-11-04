@@ -22,9 +22,9 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-# Both hosts get all five. PreCompact was Claude-only until Codex added it; its
+# Both hosts get all six (Stop carries the turn-level friction signal). PreCompact was Claude-only until Codex added it; its
 # hooks docs now list PreCompact with the same `trigger` field.
-EVENTS = {"SessionEnd", "SessionStart", "UserPromptSubmit", "PostToolUse", "PreCompact"}
+EVENTS = {"SessionEnd", "SessionStart", "UserPromptSubmit", "PostToolUse", "PreCompact", "Stop"}
 # Where each host reads user skills from. Codex reads ~/.agents/skills, and a
 # link under ~/.codex/skills looked installed while Codex never saw it.
 SKILL_LINK = {"claude": ".claude/skills/compound", "codex": ".agents/skills/compound"}
