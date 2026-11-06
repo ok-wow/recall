@@ -169,6 +169,7 @@ def env_for(root: Path, specs: Path) -> dict:
                 "RECALL_HUB_INDEX": str(root / "no-hub.json"),
                 "RECALL_CONNECTOR_DIR": str(root / "no-connectors"),
                 "RECALL_RECEIPT_DIR": str(root / "no-receipts"),
+                "RECALL_TRANSCRIPTS_DIR": str(root / "no-projects"),
                 "RECALL_ORPHAN_INDEX": str(root / "no-orphans.yaml"),
                 "RECALL_PROBE_INDEX": str(root / "recall-home" / "probe-index.json"),
                 "RECALL_SURFACED_LOG": str(root / "surfaced.jsonl")})

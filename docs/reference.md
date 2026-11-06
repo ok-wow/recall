@@ -191,6 +191,21 @@ python3 ~/recall/scripts/replay.py
 python3 ~/recall/scripts/recall.py --rerank "an approval that came from a bot"
 ```
 
+A question searches more than the catalogs. Alongside the lessons it reads your
+specs and their decision logs, the published hub, connector pointers, learning
+receipts, parked orphans, the parking lot, and your agent's own **memory notes** —
+the one-fact-per-file Markdown notes Claude Code keeps in
+`~/.claude/projects/<project>/memory/`. A note shows up as `[MEMORY]`, and
+`--id <note name>` prints it in full. That way a fact you saved once is found
+before it is worked out again, and the always-on memory index can stay short
+without any note becoming unreachable. Notes are read from three places, each
+folder once even when a link leads to it twice: the folders in `RECALL_MEMORY_DIRS`,
+every project folder under your agent's dir, and any `memory` folder moved into
+the personal store's `include/` area. `MEMORY.md` is the index, so it is skipped,
+and a note whose frontmatter says `status: retired`, `superseded` or `replaced`
+is left out unless you pass `--include-retired`. A note whose frontmatter does not
+parse is named on stderr and the rest still answer.
+
 ### `replay.py` — measure the retriever against your own history
 
 Every claim about retrieval needs ground truth, and labelling it is why most
@@ -403,8 +418,9 @@ Every path resolves through an environment variable with a default. No absolute 
 | `RECALL_JEV_TIMEOUT` | `20` | seconds before the judge is given up on |
 | `RECALL_AGENT_BIN` | `claude` | CLI used for unattended distillation |
 | `RECALL_HOST_DIR` | `~/.claude` | your agent's dir (transcripts, settings) |
-| `RECALL_TRANSCRIPTS_DIR` | `$RECALL_HOST_DIR/projects` | history `replay.py` reads |
+| `RECALL_TRANSCRIPTS_DIR` | `$RECALL_HOST_DIR/projects` | history `replay.py` reads, and the per-project memory notes `recall.py` searches |
 | `RECALL_SKILLS_DIR` | `$RECALL_HOST_DIR/skills` | the candidate set `replay.py` ranks |
+| `RECALL_MEMORY_DIRS` | unset | extra memory-note folders, `:`-separated, searched with the ones found on their own |
 
 The first two are the ones you are likely to set. Another dozen `RECALL_*` variables tune
 the drain's budgets, timeouts and paths; each is named and defaulted at the top of
