@@ -77,6 +77,8 @@ def run(d: Path, *args):
            # added later silently pulls a real store into a fixture-sized test.
            # Third time: specs/hub/connectors this morning, receipts/orphans now.
            "RECALL_RECEIPT_DIR": str(d / "none-receipts"),
+           "RECALL_TRANSCRIPTS_DIR": str(d / "no-projects"),
+           "RECALL_HOME": str(d / "no-recall-home"),
            "RECALL_ORPHAN_INDEX": str(d / "none-orphans.yaml"),
            "RECALL_LOT_DIR": str(d / "none-lot"),
            "RECALL_SPECS_DIR": str(d / "none-specs-dir"),
