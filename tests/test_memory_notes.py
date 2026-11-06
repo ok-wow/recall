@@ -109,7 +109,11 @@ def main() -> int:
 
         rc, out, _ = run("--id", "nested-metadata-note")
         check("--id exits 0", rc == 0, out)
-        check("--id prints the humanised title", "Nested metadata note" in out, out)
+        rc, out, _ = run("--id", "Pelican gate code lives in the site binder")
+        check("--id prints the title once, on the first line",
+              out.count("Pelican gate code lives in the site binder") == 1
+              and out.splitlines()[0] == "Pelican gate code lives in the site binder", out)
+        rc, out, _ = run("--id", "nested-metadata-note")
         check("--id prints the nested metadata.type and the modified date",
               "memory feedback" in out and "2026-10-14" in out, out)
         check("--id prints the path", str(FIXTURES / "nested-metadata-note.md") in out, out)

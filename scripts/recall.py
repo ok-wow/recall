@@ -1322,7 +1322,9 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None,
     # in this position.
     if judged is not None:
         line = f"  judged {judged:.2f}" + line
-    print(f"\n{head}\n{tag}" + line)
+    # The blank line separates search results; one note shown alone needs none.
+    lead = "" if full and e.get("is_memory") else "\n"
+    print(f"{lead}{head}\n{tag}" + line)
     if e.get("lifecycle"):
         nxt = r.get("superseded_by")
         print(f"  {e['lifecycle'].upper()}" + (f" by {nxt}" if nxt else "")
@@ -1349,7 +1351,6 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None,
         print(f"  {where}")
     if full and e.get("is_memory"):
         # The summary is the description; --id owes the reader the note itself.
-        print(f"  {r['title']}\n")
         print("\n".join("  " + ln if ln else "" for ln in r["body"].splitlines()))
     fix = _first(r, DISPLAY_FIX)
     if fix:
