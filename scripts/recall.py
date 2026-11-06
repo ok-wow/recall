@@ -830,6 +830,34 @@ def memory_dirs() -> list[Path]:
     return out
 
 
+def _loose_frontmatter(head: str) -> dict:
+    """Frontmatter as the agent writes it, when strict YAML refuses it.
+
+    Claude Code leaves colons in `description:` unquoted, so strict YAML fails
+    on ordinary notes. Warning about them on every query is noise the reader
+    cannot act on; reading `key: value` lines is enough for the fields used.
+    """
+    fm: dict = {}
+    meta: dict = {}
+    in_meta = False
+    for ln in head.splitlines():
+        key, sep, val = ln.strip().partition(": ")
+        if not sep and ln.strip().endswith(":"):
+            key, sep, val = ln.strip()[:-1], ":", ""
+        if not sep or not key:
+            continue
+        if ln[:1] in (" ", "\t"):
+            if in_meta and key in ("type", "modified", "status"):
+                meta[key] = val.strip()
+            continue
+        in_meta = key == "metadata"
+        if not in_meta:
+            fm[key] = val.strip()
+    if meta:
+        fm["metadata"] = meta
+    return fm
+
+
 def load_memory_notes(broken: list[dict]) -> list[dict]:
     """Index the agent's own memory notes: one Markdown file per fact.
 
@@ -853,9 +881,12 @@ def load_memory_notes(broken: list[dict]) -> list[dict]:
                 if text.startswith("---"):
                     head, sep, rest = text[3:].partition("\n---")
                     if sep:
-                        fm = yaml.safe_load(head) or {}
+                        try:
+                            fm = yaml.safe_load(head)
+                        except yaml.YAMLError:
+                            fm = None
                         if not isinstance(fm, dict):
-                            raise ValueError("frontmatter is not a mapping")
+                            fm = _loose_frontmatter(head)
                         body = rest.split("\n", 1)[1] if "\n" in rest else ""
                 meta = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
                 nid = str(fm.get("name") or f.stem).strip()
@@ -867,7 +898,7 @@ def load_memory_notes(broken: list[dict]) -> list[dict]:
                 title = title[:1].upper() + title[1:]
                 body = body.strip()
                 entry = {
-                    "key": f"MEMORY:{nid}", "id": nid, "catalog": "MEMORY",
+                    "key": f"MEMORY:{nid}", "id": nid, "stem": f.stem, "catalog": "MEMORY",
                     "recurrences": 0, "probe_when": [], "is_memory": True,
                     "raw": {"id": nid, "title": title,
                             "summary": desc or " ".join(body.split())[:400],
@@ -1829,6 +1860,13 @@ def main() -> int:
 
     if a.id:
         m = [e for e in entries if e["id"] == a.id or e["key"] == a.id]
+        if not m:
+            # A memory note is also known by its file name, and the two
+            # separators get swapped between name and stem.
+            def norm(x):
+                return str(x).replace("_", "-")
+            m = [e for e in entries if e.get("is_memory")
+                 and norm(a.id) in (norm(e["id"]), norm(e["stem"]))]
         if not m:
             # str() on both sides: a catalog may carry `id: 12345` or a bare YAML
             # date, and load_entries admits any truthy id. .lower() on an int

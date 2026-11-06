@@ -84,15 +84,24 @@ def main() -> int:
         stats = json.loads(out) if rc == 0 else {}
         check("--stats exits 0", rc == 0, err)
         check("--stats counts memory notes separately, each folder read once",
-              stats.get("memory_note_entries") == 4, str(stats.get("memory_note_entries")))
+              stats.get("memory_note_entries") == 7, str(stats.get("memory_note_entries")))
         check("memory notes are not counted as catalog lessons",
               stats.get("catalog_entries") == 0, str(stats.get("catalog_entries")))
         broken = [b for b in stats.get("unreadable_catalogs", []) if b["catalog"] == "MEMORY"]
-        check("the unparsable note is reported once, as MEMORY, with its path",
-              len(broken) == 1 and broken[0]["path"].endswith("broken-note.md")
+        check("only the undecodable note is reported, once, as MEMORY, with its path",
+              len(broken) == 1 and broken[0]["path"].endswith("undecodable-note.md")
               and broken[0]["error"], str(broken))
-        check("a broken note is named on stderr and the rest still serve",
-              "broken-note.md" in err and stats.get("memory_note_entries") == 4, err)
+        check("an undecodable note is named on stderr and the rest still serve",
+              "undecodable-note.md" in err and stats.get("memory_note_entries") == 7, err)
+
+        rc, out, err = run("--id", "colon-description")
+        check("an unquoted colon in description still indexes, with no warning",
+              rc == 0 and "Deploy rule: the ferry service restarts at 02:00, not at midnight" in out
+              and "memory feedback" in out and "colon-description" not in err, out + err)
+        rc, out, err = run("ferry restart")
+        check("the loosely parsed note is found by search, stderr quiet but for the bad file",
+              "colon-description" in out and "[MEMORY]" in out
+              and all("undecodable-note.md" in ln for ln in err.splitlines()), out + err)
 
         rc, out, _ = run("bucket")
         check("a word only in a description finds the note",
@@ -113,6 +122,15 @@ def main() -> int:
         rc, out, _ = run("--id", "plain-note")
         check("a note with no frontmatter is keyed by its file stem",
               rc == 0 and "heron sensor" in out and "memory feedback" not in out, out)
+
+        rc, out, _ = run("--id", "snake-case-stem")
+        check("--id accepts the file stem, with - and _ treated alike",
+              rc == 0 and "pelican yard" in out, out)
+        rc, out, _ = run("--id", "Pelican gate code lives in the site binder")
+        check("--id still accepts the full name", rc == 0 and "pelican yard" in out, out)
+        rc, out, _ = run("--id", "top-level-type")
+        check("an exact name wins over another note's file stem",
+              rc == 0 and "osprey" in out and "harbour" not in out, out)
 
         rc, out, _ = run("--json", "harbour")
         rows = json.loads(out) if rc == 0 else []
