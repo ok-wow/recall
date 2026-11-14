@@ -116,6 +116,8 @@ def run(d: Path, *args: str, surfaced_log: str | None = None) -> tuple[int, str]
            # Every corpus recall can read has to be pinned, or a loader
            # added later silently pulls a real store into a fixture test.
            "RECALL_RECEIPT_DIR": str(d / "none-receipts"),
+           "RECALL_TRANSCRIPTS_DIR": str(d / "no-projects"),
+           "RECALL_HOME": str(d / "no-recall-home"),
            "RECALL_ORPHAN_INDEX": str(d / "none-orphans.yaml"),
            "RECALL_LOT_DIR": str(d / "none-lot"),
            "RECALL_SPECS_DIR": str(d / "none-specs-dir"),
@@ -227,6 +229,7 @@ def main() -> int:
            # Every corpus recall can read has to be pinned, or a loader
            # added later silently pulls a real store into a fixture test.
            "RECALL_RECEIPT_DIR": str(d / "none-receipts"),
+           "RECALL_TRANSCRIPTS_DIR": str(d / "no-projects"),
            "RECALL_ORPHAN_INDEX": str(d / "none-orphans.yaml"),
            "RECALL_LOT_DIR": str(d / "none-lot"),
            "RECALL_SPECS_DIR": str(d / "none-specs-dir"),

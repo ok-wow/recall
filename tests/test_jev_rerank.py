@@ -130,6 +130,8 @@ def run(d: Path, *args: str, url: str | None = None, key: str | None = "test-key
            "RECALL_HUB_INDEX": str(d / "nonexistent-hub.json"),
            "RECALL_CONNECTOR_DIR": str(d / "nonexistent-connectors"),
            "RECALL_RECEIPT_DIR": str(d / "nonexistent-receipts"),
+           "RECALL_TRANSCRIPTS_DIR": str(d / "no-projects"),
+           "RECALL_HOME": str(d / "no-recall-home"),
            "RECALL_ORPHAN_INDEX": str(d / "nonexistent-orphans.yaml"),
            "RECALL_LOT_DIR": str(d / "nonexistent-lot"),
            "RECALL_SPECS_DIR": str(d / "nonexistent-specs-dir"),

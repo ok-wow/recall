@@ -107,6 +107,12 @@ CONNECTOR_DIR = env_path("RECALL_CONNECTOR_DIR", "OKWOW_CONNECTOR_DIR",
 # Work somebody decided to do later, one JSON file per item, written by
 # park.py. See read_lot.
 LOT_DIR = env_path("RECALL_LOT_DIR", "OKWOW_LOT_DIR", RECALL_HOME / "lot" / "items")
+# Extra memory-note folders, os.pathsep-separated, read before the agent's own
+# per-project folders under PROJECTS_DIR. See load_memory_notes.
+MEMORY_DIRS_ENV = ("RECALL_MEMORY_DIRS", "OKWOW_MEMORY_DIRS")
+# The same root replay.py reads transcripts from, so one pin isolates both.
+PROJECTS_DIR = env_path("RECALL_TRANSCRIPTS_DIR",
+                        env_path("RECALL_HOST_DIR", Path.home() / ".claude") / "projects")
 
 WORD = re.compile(r"[a-z0-9][a-z0-9._/-]*", re.I)
 # Ordinary English that carries no retrieval signal. Deliberately short: BM25's
@@ -231,6 +237,8 @@ def load_entries(include_retired: bool = False) -> list[dict]:
     entries.extend(load_receipts(broken))
     entries.extend(load_orphans(broken))
     entries.extend(load_lot(broken))
+    entries.extend(m for m in load_memory_notes(broken)
+                   if include_retired or not m.get("lifecycle"))
     load_entries.broken = broken
     load_entries.parsed = parsed
     load_entries.inactive = inactive
@@ -807,6 +815,107 @@ def load_receipts(broken: list[dict]) -> list[dict]:
     return out
 
 
+def memory_dirs() -> list[Path]:
+    """Every memory folder to read, each once however many routes lead to it."""
+    raw = next((os.environ[n] for n in MEMORY_DIRS_ENV if os.environ.get(n)), "")
+    found = [Path(x).expanduser() for x in raw.split(os.pathsep) if x]
+    found += sorted(PROJECTS_DIR.glob("*/memory"))
+    # personal_repo.py moves an outside memory folder to include/<its path>.
+    found += sorted((RECALL_HOME / "include").glob("**/memory"))
+    out, seen = [], set()
+    for d in found:
+        if d.is_dir() and d.resolve() not in seen:
+            seen.add(d.resolve())
+            out.append(d)
+    return out
+
+
+def _loose_frontmatter(head: str) -> dict:
+    """Frontmatter as the agent writes it, when strict YAML refuses it.
+
+    Claude Code leaves colons in `description:` unquoted, so strict YAML fails
+    on ordinary notes. Warning about them on every query is noise the reader
+    cannot act on; reading `key: value` lines is enough for the fields used.
+    """
+    fm: dict = {}
+    meta: dict = {}
+    in_meta = False
+    for ln in head.splitlines():
+        key, sep, val = ln.strip().partition(": ")
+        if not sep and ln.strip().endswith(":"):
+            key, sep, val = ln.strip()[:-1], ":", ""
+        if not sep or not key:
+            continue
+        if ln[:1] in (" ", "\t"):
+            if in_meta and key in ("type", "modified", "status"):
+                meta[key] = val.strip()
+            continue
+        in_meta = key == "metadata"
+        if not in_meta:
+            fm[key] = val.strip()
+    if meta:
+        fm["metadata"] = meta
+    return fm
+
+
+def load_memory_notes(broken: list[dict]) -> list[dict]:
+    """Index the agent's own memory notes: one Markdown file per fact.
+
+    The always-on memory index is capped, so a note it stops pointing at is a
+    fact the agent re-derives. Searching the notes themselves keeps every one
+    reachable however short the index gets. MEMORY.md is that index, not a note.
+    """
+    import yaml
+    out = []
+    for d in memory_dirs():
+        root = d.resolve()
+        for f in sorted(d.glob("*.md")):
+            if f.name == "MEMORY.md" or f.name.startswith("."):
+                continue
+            # A link out of the folder is somebody else's file, not a note.
+            if f.is_symlink() and root not in f.resolve().parents:
+                continue
+            try:
+                text = f.read_text()
+                fm, body = {}, text
+                if text.startswith("---"):
+                    head, sep, rest = text[3:].partition("\n---")
+                    if sep:
+                        try:
+                            fm = yaml.safe_load(head)
+                        except yaml.YAMLError:
+                            fm = None
+                        if not isinstance(fm, dict):
+                            fm = _loose_frontmatter(head)
+                        body = rest.split("\n", 1)[1] if "\n" in rest else ""
+                meta = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
+                nid = str(fm.get("name") or f.stem).strip()
+                desc = " ".join(str(fm.get("description") or "").split())
+                kind = str(fm.get("type") or meta.get("type") or "").strip()
+                when = str(meta.get("modified") or fm.get("modified") or "")[:10] or \
+                    datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d")
+                title = re.sub(r"[-_]+", " ", nid)
+                title = title[:1].upper() + title[1:]
+                body = body.strip()
+                entry = {
+                    "key": f"MEMORY:{nid}", "id": nid, "stem": f.stem, "catalog": "MEMORY",
+                    "recurrences": 0, "probe_when": [], "is_memory": True,
+                    "raw": {"id": nid, "title": title,
+                            "summary": desc or " ".join(body.split())[:400],
+                            "doc_type": f"memory {kind}".strip(),
+                            "updated": when, "spec_path": str(f), "body": body},
+                    "text": "\n".join([re.sub(r"[-_]+", " ", nid), title, desc, body]),
+                }
+                status = str(fm.get("status") or meta.get("status") or "").strip().casefold()
+                if status == "replaced" or not _push_channel().entry_is_active({"status": status}):
+                    entry["lifecycle"] = status
+                out.append(entry)
+            except Exception as exc:
+                broken.append({"catalog": "MEMORY", "path": str(f),
+                               "error": why_broken(exc)})
+    return out
+
+
 def load_orphans(broken: list[dict]) -> list[dict]:
     """Index the orphanage -- learning that was captured and had no home yet.
 
@@ -1194,7 +1303,7 @@ _push_channel.mod = None
 # counted them would move without anything getting harder to reach. One list,
 # so the next source is excluded everywhere at once instead of at four sites.
 NOT_LESSONS = ("is_spec", "is_hub", "is_connector", "is_receipt", "is_orphan", "is_lot",
-               "is_decision")
+               "is_decision", "is_memory")
 
 
 def is_pointer(e: dict) -> bool:
@@ -1213,7 +1322,9 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None,
     # in this position.
     if judged is not None:
         line = f"  judged {judged:.2f}" + line
-    print(f"\n{head}\n{tag}" + line)
+    # The blank line separates search results; one note shown alone needs none.
+    lead = "" if full and e.get("is_memory") else "\n"
+    print(f"{lead}{head}\n{tag}" + line)
     if e.get("lifecycle"):
         nxt = r.get("superseded_by")
         print(f"  {e['lifecycle'].upper()}" + (f" by {nxt}" if nxt else "")
@@ -1238,6 +1349,9 @@ def show(e: dict, score: float | None = None, hits: list[str] | None = None,
         if e.get("is_spec") and where.startswith(SPECS_REF + ":"):
             where += f"  (read from {SPECS_REF}; git -C {SPECS_INDEX.parent} show {where})"
         print(f"  {where}")
+    if full and e.get("is_memory"):
+        # The summary is the description; --id owes the reader the note itself.
+        print("\n".join("  " + ln if ln else "" for ln in r["body"].splitlines()))
     fix = _first(r, DISPLAY_FIX)
     if fix:
         fix = " ".join(str(fix).split())
@@ -1660,6 +1774,8 @@ def main() -> int:
             "decision_formats": getattr(load_decisions, "formats", {}),
             "hub_entries": sum(1 for e in entries if e.get("is_hub")),
             "connector_entries": sum(1 for e in entries if e.get("is_connector")),
+            # Notes, like rules, carry no probe_when and never reach injection.
+            "memory_note_entries": sum(1 for e in entries if e.get("is_memory")),
             "connector_sources": sorted({e["catalog"] for e in entries
                                          if e.get("is_connector")}),
             "by_catalog": dict(Counter(e["catalog"] for e in entries)),
@@ -1745,6 +1861,13 @@ def main() -> int:
 
     if a.id:
         m = [e for e in entries if e["id"] == a.id or e["key"] == a.id]
+        if not m:
+            # A memory note is also known by its file name, and the two
+            # separators get swapped between name and stem.
+            def norm(x):
+                return str(x).replace("_", "-")
+            m = [e for e in entries if e.get("is_memory")
+                 and norm(a.id) in (norm(e["id"]), norm(e["stem"]))]
         if not m:
             # str() on both sides: a catalog may carry `id: 12345` or a bare YAML
             # date, and load_entries admits any truthy id. .lower() on an int
