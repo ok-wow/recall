@@ -19,7 +19,8 @@ permissions:
 
 jobs:
   suites:
-    runs-on: ubuntu-latest
+    # ubuntu-latest (26.04) ships no Python 3.9 build, so the floor runs on 24.04.
+    runs-on: ${{ matrix.python == '3.9' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false        # a 3.9-only break should not hide a 3.13-only break
       matrix:
