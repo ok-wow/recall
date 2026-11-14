@@ -46,8 +46,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-CLAUDE = Path.home() / ".claude/hooks/okwow-compound-userprompt.sh"
-CODEX = Path.home() / ".codex/hooks/okwow-compound-userprompt.sh"
+ROOT = Path(os.environ.get("OKWOW_COMPOUND_ROOT") or Path.home())
+CLAUDE = ROOT / ".claude/hooks/okwow-compound-userprompt.sh"
+CODEX = ROOT / ".codex/hooks/okwow-compound-userprompt.sh"
 
 # ONE COPY, NOT MATCHING COPIES. Until 2026-09-19 ~/.claude/hooks held real files
 # and ~/.claude/skills/hooks held a committed mirror of two of them. Then the live
@@ -58,10 +59,10 @@ CODEX = Path.home() / ".codex/hooks/okwow-compound-userprompt.sh"
 # sessionstart, and without the drain's refuse-to-run-unattended guard. So the
 # check is no longer "these copies agree". It is "every place a hook is served
 # from resolves to the tracked file", except the hook DERIVED from it below.
-TRACKED = Path.home() / ".claude/skills/_hooks"
-SERVED_DIRS = [Path.home() / ".claude/hooks", Path.home() / ".codex/hooks",
-               Path.home() / ".claude/skills/hooks"]
-IN_REPO = Path.home() / ".claude/skills"   # links inside the repo stay relative
+TRACKED = ROOT / ".claude/skills/_hooks"
+SERVED_DIRS = [ROOT / ".claude/hooks", ROOT / ".codex/hooks",
+               ROOT / ".claude/skills/hooks"]
+IN_REPO = ROOT / ".claude/skills"   # links inside the repo stay relative
 
 
 def unlinked() -> list[tuple[Path, bool]]:
